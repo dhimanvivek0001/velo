@@ -9,3 +9,7 @@ End-to-end data platform that quantifies revenue lost to supply–demand mismatc
 - [ ] Phase 1 — Ingestion & API integration
 - [ ] Phase 2 — Lakehouse (bronze/silver)
 - [ ] Phase 3 — dbt modelling (gold)
+- [x] Phase 0 — Environment setup (Databricks, AWS S3/IAM, pre-commit, smoke test)
+- [ ] Phase 1 — Ingestion & API integration
+- [ ] Phase 2 — Lakehouse (bronze/silver)
+- [ ] Phase 3 — dbt modelling (gold)
