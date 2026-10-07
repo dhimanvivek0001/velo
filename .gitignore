@@ -1,0 +1,27 @@
+# Python virtual environment and cache
+.venv/
+__pycache__/
+*.pyc
+
+# Secrets: NEVER commit these
+.env
+
+# Data files: too large for Git, and reproducible from source
+data/
+*.parquet
+*.csv
+
+# Airflow runtime files
+airflow/logs/
+
+# dbt build outputs
+dbt/**/target/
+dbt/**/dbt_packages/
+dbt/**/logs/
+
+# ML experiment tracking (local)
+mlruns/
+
+# Notebook and OS junk
+.ipynb_checkpoints/
+.DS_Store

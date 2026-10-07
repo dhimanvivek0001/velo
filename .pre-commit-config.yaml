@@ -1,0 +1,19 @@
+repos:
+  # Python linting + formatting
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.10
+    hooks:
+      - id: ruff-check    # finds bugs and bad patterns         # finds bugs and bad patterns
+        args: [--fix]     # auto-fixes what it can
+      - id: ruff-format   # formats code consistently
+
+  # General safety + hygiene checks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-yaml                # catches broken YAML
+      - id: end-of-file-fixer         # every file ends with a newline
+      - id: trailing-whitespace       # removes stray spaces
+      - id: detect-aws-credentials    # BLOCKS AWS keys
+        args: [--allow-missing-credentials]
+      - id: detect-private-key        # BLOCKS private keys
