@@ -1,0 +1,12 @@
+# Store and check out all text files with Linux (LF) line endings.
+# Our code runs in Linux containers (Airflow, Kafka, Databricks).
+* text=auto eol=lf
+
+# Windows-only scripts keep Windows endings
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+
+# Binary files: never touch them
+*.parquet binary
+*.pbix binary
+*.png binary
