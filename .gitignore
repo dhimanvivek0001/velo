@@ -25,3 +25,6 @@ mlruns/
 # Notebook and OS junk
 .ipynb_checkpoints/
 .DS_Store
+
+# Personal editor settings
+*.code-workspace
