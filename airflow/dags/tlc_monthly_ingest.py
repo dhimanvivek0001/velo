@@ -1,6 +1,7 @@
-"""Velo - monthly ingestion of NYC TLC HVFHV trip data.
+"""Velo - monthly ingestion of NYC TLC HVFHV trips + hourly NYC weather.
 
 pick_month -> download -> validate -> upload_s3 -> upload_databricks
+           -> ingest_weather   (runs in parallel)
 """
 
 from datetime import timedelta
@@ -17,7 +18,7 @@ default_args = {
 
 @dag(
     dag_id="tlc_monthly_ingest",
-    description="Download one month of NYC HVFHV trips, validate, land in S3 + Databricks",
+    description="Download one month of NYC HVFHV trips + weather, validate, land in S3 + Databricks",
     schedule=None,  # manual trigger for now; monthly schedule comes in Step 1.6
     catchup=False,
     default_args=default_args,
@@ -64,12 +65,25 @@ def tlc_monthly_ingest():
 
         return upload_to_databricks(Path(path), target["year"], target["month"])
 
+    @task(execution_timeout=timedelta(minutes=15))
+    def ingest_weather(target: dict) -> str:
+        """Hourly NYC weather from the Open-Meteo API. Independent of trips."""
+        from ingestion import ingest_weather as weather
+
+        year, month = target["year"], target["month"]
+        df = weather.fetch(year, month)
+        weather.validate(df, year, month)
+        path = weather.save(df, year, month)
+        weather.upload(path, year, month)
+        return str(path)
+
     # ----- Wire the tasks together -----
     target = pick_month()
     path = download(target)
     rows = validate(path, target)
     s3_key = upload_s3(path, target)
     dbx_path = upload_databricks(path, target)
+    ingest_weather(target)  # runs in parallel with the trip tasks
 
     # Uploads only start after validation passes; S3 first, then Databricks
     rows >> s3_key >> dbx_path
