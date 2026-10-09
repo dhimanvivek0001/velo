@@ -1,0 +1,25 @@
+# Velo - Airflow in standalone mode (one container: scheduler + web UI + database)
+services:
+  airflow:
+    image: apache/airflow:3.3.2-python3.11
+    container_name: velo-airflow
+    command: standalone
+    ports:
+      - "8080:8080"
+    working_dir: /opt/velo
+    environment:
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__DAGS_FOLDER: /opt/velo/airflow/dags
+      # Dev shortcut: extra packages installed at container start
+      _PIP_ADDITIONAL_REQUIREMENTS: "databricks-sdk>=0.30,<1.0 python-dotenv>=1.0,<2.0 boto3 pyarrow"
+    volumes:
+      # Your whole project, shared into the container
+      - ..:/opt/velo
+      # Airflow's own database and logs, kept between restarts
+      - airflow-home:/opt/airflow
+      # Your credentials, READ-ONLY, so the container can reach AWS + Databricks
+      - ${USERPROFILE}/.aws:/home/airflow/.aws:ro
+      - ${USERPROFILE}/.databrickscfg:/home/airflow/.databrickscfg:ro
+
+volumes:
+  airflow-home:
