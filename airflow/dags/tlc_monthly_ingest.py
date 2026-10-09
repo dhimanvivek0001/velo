@@ -1,7 +1,8 @@
-"""Velo - monthly ingestion of NYC TLC HVFHV trips + hourly NYC weather.
+"""Velo - monthly ingestion: NYC TLC HVFHV trips + hourly weather + permitted events.
 
 pick_month -> download -> validate -> upload_s3 -> upload_databricks
-           -> ingest_weather   (runs in parallel)
+           -> ingest_weather   (parallel)
+           -> ingest_events    (parallel)
 """
 
 from datetime import timedelta
@@ -18,7 +19,7 @@ default_args = {
 
 @dag(
     dag_id="tlc_monthly_ingest",
-    description="Download one month of NYC HVFHV trips + weather, validate, land in S3 + Databricks",
+    description="One month of NYC HVFHV trips + weather + events, validated, landed in S3 + Databricks",
     schedule=None,  # manual trigger for now; monthly schedule comes in Step 1.6
     catchup=False,
     default_args=default_args,
@@ -77,13 +78,27 @@ def tlc_monthly_ingest():
         weather.upload(path, year, month)
         return str(path)
 
+    @task(execution_timeout=timedelta(minutes=15))
+    def ingest_events(target: dict) -> int:
+        """Permitted street events from NYC Open Data (paginated). Independent of trips."""
+        from ingestion import ingest_events as events
+        from ingestion.storage import upload_small_file
+
+        year, month = target["year"], target["month"]
+        df, expected = events.fetch(year, month)
+        events.validate(df, expected)
+        path = events.save(df, year, month)
+        upload_small_file(path, events.partition_path(year, month))
+        return len(df)
+
     # ----- Wire the tasks together -----
     target = pick_month()
     path = download(target)
     rows = validate(path, target)
     s3_key = upload_s3(path, target)
     dbx_path = upload_databricks(path, target)
-    ingest_weather(target)  # runs in parallel with the trip tasks
+    ingest_weather(target)  # parallel with trips
+    ingest_events(target)  # parallel with trips
 
     # Uploads only start after validation passes; S3 first, then Databricks
     rows >> s3_key >> dbx_path
