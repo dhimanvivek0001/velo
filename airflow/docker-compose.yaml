@@ -10,6 +10,8 @@ services:
     environment:
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__CORE__DAGS_FOLDER: /opt/velo/airflow/dags
+      # Lets DAGs import our project code, e.g. "from ingestion.ingest_tlc import ..."
+      PYTHONPATH: /opt/velo
       # Dev shortcut: extra packages installed at container start
       _PIP_ADDITIONAL_REQUIREMENTS: "databricks-sdk>=0.30,<1.0 python-dotenv>=1.0,<2.0 boto3 pyarrow"
     volumes:

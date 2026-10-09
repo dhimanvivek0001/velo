@@ -17,12 +17,15 @@ from databricks.sdk.config import Config as DatabricksConfig
 from databricks.sdk.errors import NotFound
 from dotenv import load_dotenv
 
-load_dotenv()
+# ---------- Paths: absolute, so this works from any folder (laptop or Airflow) ----------
+# __file__ = .../velo/ingestion/ingest_tlc.py  ->  parents[1] = .../velo
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+load_dotenv(PROJECT_ROOT / ".env")
 
 # ---------- Settings ----------
 BASE_URL = "https://d37ci6vzurychx.cloudfront.net/trip-data"
 DATASET = "fhvhv"
-LOCAL_DIR = Path("data/raw")
+LOCAL_DIR = PROJECT_ROOT / "data" / "raw"
 MIN_ROWS = 1_000_000
 REQUIRED_COLUMNS = {
     "hvfhs_license_num",
