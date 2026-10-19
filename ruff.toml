@@ -1,0 +1,2 @@
+# Names that Databricks notebooks provide automatically at runtime
+builtins = ["spark", "display", "dbutils"]
