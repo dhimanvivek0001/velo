@@ -1,0 +1,16 @@
+version: 2
+
+sources:
+  - name: silver
+    description: "Cleaned tables built by the Spark notebooks (Phase 2)."
+    database: velo        # in Databricks, dbt's 'database' = Unity Catalog catalog
+    schema: silver
+    tables:
+      - name: hvfhv_trips
+        description: "One row per completed Uber/Lyft trip, Jul 2024 - Jun 2025. Typed, flagged, clustered by pickup_date + pu_location_id."
+      - name: hvfhv_trips_quarantine
+        description: "Trips rejected by hard data-quality rules (_reject_reason)."
+      - name: weather_hourly
+        description: "Hourly NYC weather from Open-Meteo. One row per local clock hour."
+      - name: events
+        description: "NYC permitted events. One row per permit occurrence (not per street)."

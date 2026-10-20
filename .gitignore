@@ -28,3 +28,6 @@ mlruns/
 
 # Personal editor settings
 *.code-workspace
+
+# dbt seeds are small reference data and SHOULD be version-controlled
+!dbt/velo/seeds/*.csv

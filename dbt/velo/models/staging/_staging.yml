@@ -1,0 +1,30 @@
+version: 2
+
+models:
+  - name: stg_zones
+    columns:
+      - name: zone_id
+        data_tests:
+          - unique
+          - not_null
+
+  - name: stg_trips
+    columns:
+      - name: trip_id
+        data_tests:
+          - unique
+          - not_null
+      - name: pu_location_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_zones')
+                field: zone_id
+
+  - name: stg_weather
+    columns:
+      - name: weather_hour
+        data_tests:
+          - unique
+          - not_null

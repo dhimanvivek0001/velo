@@ -1,0 +1,29 @@
+version: 2
+
+models:
+  - name: dim_zone
+    columns:
+      - name: zone_id
+        data_tests: [unique, not_null]
+
+  - name: dim_date
+    columns:
+      - name: date_day
+        data_tests: [unique, not_null]
+
+  - name: fct_zone_hour
+    description: "One row per pickup zone per hour with demand, wait, revenue, weather and event context."
+    columns:
+      - name: zone_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_zone')
+                field: zone_id
+      - name: hour_ts
+        data_tests: [not_null]
+      - name: trips
+        data_tests: [not_null]
+      - name: borough
+        data_tests: [not_null]

@@ -8,3 +8,5 @@ ruff>=0.6,<1.0                # Fast Python linter and formatter
 requests>=2.31,<3.0       # Download files and call APIs over the internet
 pandas>=2.2,<3.0          # Work with tables of data in Python
 pyarrow>=16.0             # Read and write Parquet files (fast, compressed)
+# --- Phase 3: dbt ---
+dbt-databricks>=1.9,<2.0   # dbt + the Databricks adapter

@@ -1,0 +1,23 @@
+name: velo
+version: "1.0.0"
+profile: velo            # must match the name in profiles.yml
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+
+clean-targets: ["target", "dbt_packages"]
+
+models:
+  velo:
+    staging:
+      +materialized: view
+    marts:
+      +materialized: table
+
+seeds:
+  velo:
+    taxi_zone_lookup:
+      +column_types:
+        LocationID: int
