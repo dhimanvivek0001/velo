@@ -2,19 +2,24 @@ version: 2
 
 models:
   - name: dim_zone
+    description: "One row per TLC taxi zone, with borough and flags for Manhattan core and airports."
     columns:
       - name: zone_id
+        description: "TLC zone ID (1-265)"
         data_tests: [unique, not_null]
 
   - name: dim_date
+    description: "One row per day, Jul 2024 - Jun 2025, with weekend, US holiday and congestion-pricing flags."
     columns:
       - name: date_day
+        description: "Calendar date"
         data_tests: [unique, not_null]
 
   - name: fct_zone_hour
-    description: "One row per pickup zone per hour with demand, wait, revenue, weather and event context."
+    description: "One row per pickup zone per hour (Jul 2024 - Jun 2025), aggregated from ~240M HVFHV trips. Grain: zone_id + hour_ts."
     columns:
       - name: zone_id
+        description: "TLC pickup zone ID (FK to dim_zone)"
         data_tests:
           - not_null
           - relationships:
@@ -22,8 +27,23 @@ models:
                 to: ref('dim_zone')
                 field: zone_id
       - name: hour_ts
+        description: "Start of the hour, local NYC clock time"
         data_tests: [not_null]
       - name: trips
+        description: "Number of completed trips picked up in this zone-hour"
         data_tests: [not_null]
+      - name: median_wait_min
+        description: "Median minutes from request to pickup (bad and outlier waits excluded)"
+      - name: p90_wait_min
+        description: "90th-percentile wait: the experience of the unluckiest 10% of riders"
+      - name: share_wait_over_10min
+        description: "Share of riders who waited over 10 minutes (leakage risk signal)"
+      - name: gross_bookings_usd
+        description: "Sum of base passenger fares, USD"
+      - name: trips_with_cbd_fee
+        description: "Trips charged the Manhattan congestion pricing fee (from 5 Jan 2025)"
       - name: borough
+        description: "Borough of the pickup zone"
         data_tests: [not_null]
+      - name: borough_active_events
+        description: "Non-sports permitted events active in the same borough this hour"
