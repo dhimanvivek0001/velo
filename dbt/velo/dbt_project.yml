@@ -8,6 +8,9 @@ test-paths: ["tests"]
 macro-paths: ["macros"]
 clean-targets: ["target", "dbt_packages"]
 
+on-run-end:
+  - "{{ log_dq_results(results) }}"
+
 models:
   velo:
     staging:
