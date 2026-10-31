@@ -136,7 +136,7 @@ def main() -> None:
             due = time.monotonic() - last_flush >= args.flush_seconds
             if len(buffer) >= args.batch_size or (buffer and due):
                 flush()
-            if idle >= args.idle_exit and (total or buffer):
+            if args.idle_exit and idle >= args.idle_exit and (total or buffer):
                 break  # stream went quiet after receiving data
     except KeyboardInterrupt:
         print("Stopped by user.")

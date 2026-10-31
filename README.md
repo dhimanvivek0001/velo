@@ -80,3 +80,13 @@ TLC parquet -> producer.py -> Kafka topic ride_requests (3 partitions) -> surge_
 | Routed to DLQ | 256 / 256 (52 invalid JSON, 51 missing field, 51 bad zone, 51 bad timestamp, 51 unknown company) |
 | Unique events after dedupe | 128,068 |
 | Streaming result | 117,227 requests in 33 closed windows, **identical to the clean run**, 0 difference per window vs batch truth |
+### Phase 4.6–4.7 — Observability and containerised services
+
+**Consumer lag monitor** (`streaming/lag_monitor.py`): lag = latest offset − committed offset per partition. It alerts only when lag is above 10k **and** growing for 3 checks, with hysteresis (recovered below 1k, DRAINING in between).
+- A side-by-side run with the old rule (5k threshold, no hysteresis) on the same incident: the old rule flapped HIGH↔RECOVERED 4 times; the new one went ALERT → DRAINING → RECOVERED cleanly. The threshold is set above normal lag (rate × commit interval ≈ 7k).
+
+**Docker services** (`streaming/docker-compose.yaml`): Kafka (two listeners, `localhost:9092` for the laptop and `kafka:29092` for containers, plus a healthcheck), plus `sink` and `lag-monitor` (`restart: unless-stopped`), plus `producer` (an on-demand profile). One image, pinned library versions, credentials mounted read-only (never baked into the image).
+
+**Incident drill:** the producer replayed 41,851 events; the sink container was stopped mid-stream. Lag climbed to 34,654 → ALERT; the sink was restarted → one catch-up upload of **exactly 34,654** events → RECOVERED. No loss, no duplicates.
+
+**Bug found:** the Kafka volume was mounted at `/var/lib/kafka/data`, but the image writes to `/tmp/kraft-combined-logs` by default, so topics vanished when the container was recreated. Fixed with `KAFKA_LOG_DIRS` and verified with `--force-recreate`.

@@ -1,4 +1,4 @@
-services:
+﻿services:
   kafka:
     image: apache/kafka:3.9.0
     container_name: velo-kafka
@@ -7,17 +7,62 @@ services:
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      # PLAINTEXT = for your laptop (localhost:9092), INTERNAL = for other containers (kafka:29092)
+      KAFKA_LISTENERS: PLAINTEXT://:9092,INTERNAL://:29092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,INTERNAL://kafka:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,INTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_NUM_PARTITIONS: 3
+      KAFKA_LOG_DIRS: /var/lib/kafka/data  # store data IN the volume
     volumes:
       - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list > /dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 15s
+
+  sink:
+    build: .
+    container_name: velo-sink
+    command: ["python", "streaming/kafka_to_volume.py",
+              "--bootstrap", "kafka:29092", "--dir", "ride_requests_docker", "--idle-exit", "0"]
+    environment:
+      DATABRICKS_PROFILE: velo
+    volumes:
+      - ~/.databrickscfg:/root/.databrickscfg:ro
+    depends_on:
+      kafka:
+        condition: service_healthy
+    restart: unless-stopped
+
+  lag-monitor:
+    build: .
+    container_name: velo-lag-monitor
+    command: ["python", "streaming/lag_monitor.py",
+              "--bootstrap", "kafka:29092", "--watch", "10", "--groups", "velo-volume-sink-v2"]
+    volumes:
+      - ../data:/app/data
+    depends_on:
+      kafka:
+        condition: service_healthy
+    restart: unless-stopped
+
+  producer:
+    build: .
+    profiles: ["replay"]  # only runs when asked: docker compose run --rm producer ...
+    entrypoint: ["python", "streaming/producer.py", "--bootstrap", "kafka:29092"]
+    volumes:
+      - ../data:/app/data
+    depends_on:
+      kafka:
+        condition: service_healthy
 
 volumes:
   kafka-data:
