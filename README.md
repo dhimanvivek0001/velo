@@ -28,3 +28,21 @@ dbt project (`dbt/velo`) on Databricks SQL Warehouse, building a tested star sch
 **Data tests (19):** unique / not_null keys, referential integrity (trips → zones), a custom grain test (zone + hour) and a reconciliation test (sum of fact trips = source trip count).
 
 **Finding:** the uniqueness test on `trip_id` flagged 2,988 colliding keys. Investigation showed all 6,059 rows were distinct trips (99.7% differ in dropoff time, distance and fare): same driver, request and pickup time, so likely multi-rider pickups. Fix: extend the surrogate key, rather than deleting real trips.
+
+## Phase 4 — Real-time streaming with Kafka 🚧
+
+Replays real ride requests as a live event stream and detects demand surges per zone in real time.
+
+
+| Component | What it does |
+|---|---|
+| `streaming/docker-compose.yaml` | Single-node Kafka 3.9 (KRaft mode, no ZooKeeper) |
+| `streaming/producer.py` | Replays real requests in their original rhythm; only request-time fields (no future leakage); `acks=all`, backpressure handling |
+| `streaming/build_baseline.py` | Exports "normal" demand per zone × weekday × hour from the dbt gold table via the Databricks SQL connector |
+| `streaming/surge_monitor.py` | Tumbling 5-min windows on event time; flags zones ≥2× normal; skips malformed messages; saves every window to CSV |
+
+**Result:** Friday 14 Mar 2025, 17:00–20:00, 128,068 events processed, 0 late, 0 malformed.
+
+**Bug found and fixed:** the first version used a global watermark (latest event time across all partitions). Because Kafka only orders events *within* a partition, reading partition 0 first closed every window early, and **71% of events were dropped as late**. Fixed with a per-partition watermark (the minimum of each partition's latest event time), the same approach Spark and Flink use.
+
+**Finding:** surges of 3–5× concentrated in Brooklyn's Orthodox Jewish neighbourhoods (Borough Park, Williamsburg, Midwood) and stopped at around 18:45. That date was **Purim**, and on a Friday Shabbat begins at sunset. The baseline only knows US federal holidays, which motivates cultural-calendar features in the forecasting model.
