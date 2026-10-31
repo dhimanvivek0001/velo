@@ -14,6 +14,8 @@ models:
       +materialized: view
     marts:
       +materialized: table
+    monitoring:
+      +materialized: table
 
 seeds:
   velo:
