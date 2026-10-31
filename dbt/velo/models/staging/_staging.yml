@@ -9,6 +9,12 @@ models:
           - not_null
 
   - name: stg_trips
+    data_tests:
+      # Business rule: congestion pricing started at midnight on 5 Jan 2025.
+      # A fee is valid if the trip ENDED after the start (it entered the zone after midnight).
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "coalesce(cbd_congestion_fee, 0) = 0 or dropoff_ts >= timestamp'2025-01-05 00:00:00'"
     columns:
       - name: trip_id
         data_tests:

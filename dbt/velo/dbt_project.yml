@@ -1,12 +1,11 @@
 name: velo
 version: "1.0.0"
-profile: velo            # must match the name in profiles.yml
+profile: velo
 
 model-paths: ["models"]
 seed-paths: ["seeds"]
 test-paths: ["tests"]
 macro-paths: ["macros"]
-
 clean-targets: ["target", "dbt_packages"]
 
 models:
@@ -21,3 +20,7 @@ seeds:
     taxi_zone_lookup:
       +column_types:
         LocationID: int
+
+data_tests:
+  velo:
+    +store_failures: true  # save failing rows to a table for inspection
