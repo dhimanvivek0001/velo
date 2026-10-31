@@ -107,5 +107,5 @@ Medallion architecture on Delta Lake (Unity Catalog `velo`), built with PySpark 
 **Engineering highlights**
 - **Reconciliation:** bronze = silver + quarantine, exactly (239,600,971 = 239,591,318 + 9,653).
 - **Idempotent ingestion:** re-running Auto Loader added 0 rows (the checkpoint tracks processed files).
-- **Performance:** liquid clustering on `pickup_date, pu_location_id`, with Delta statistics limited to the filter columns (`delta.dataSkippingStatsColumns`), then `OPTIMIZE`.
+- - **Performance (measured honestly):** liquid clustering on `pickup_date, pu_location_id` plus Delta stats on the filter columns. Benchmark (zone + day filter, 6 dates, warm-up, interleaved, median): bronze 1.32 s vs silver 1.08 s, **1.2×**. A naive first run showed 2.8×, but that was a serverless cold-start artefact. At this scale queries are overhead-bound (~1 s) and bronze is already date-ordered from monthly loads, so clustering's benefit would show at larger scale or in bytes scanned, not wall-clock time.
 - **Backfill decision (ADR 0001):** a laptop → S3 → Databricks backfill projected ~17 h on home upload speeds; switching to direct ingestion into a Databricks volume loaded 11 months in ~2 minutes. See `docs/decisions/0001-databricks-direct-ingest.md`.
