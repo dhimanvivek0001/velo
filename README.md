@@ -56,3 +56,13 @@ TLC parquet -> producer.py -> Kafka topic ride_requests (3 partitions) -> surge_
 **Bug found and fixed:** the first version used a global watermark (latest event time across all partitions). Because Kafka only orders events *within* a partition, reading partition 0 first closed every window early, and **71% of events were dropped as late**. Fixed with a per-partition watermark (the minimum of each partition's latest event time), the same approach Spark and Flink use.
 
 **Finding:** surges of 3–5× concentrated in Brooklyn's Orthodox Jewish neighbourhoods (Borough Park, Williamsburg, Midwood) and stopped at around 18:45. That date was **Purim**, and on a Friday Shabbat begins at sunset. The baseline only knows US federal holidays, which motivates cultural-calendar features in the forecasting model.
+### Phase 4.4 — Kafka → Databricks (Structured Streaming into Delta)
+
+`kafka_to_volume.py` is an at-least-once sink (offsets committed only after a successful upload), landing 10-second JSON files in a Unity Catalog volume. `databricks/06_stream_surge.py` reads them with Auto Loader as a stream, applies 5-minute event-time windows with a 10-minute watermark, writes `velo.silver.stream_zone_5min` (Delta) and exposes `velo.gold.stream_surge_alerts`.
+
+**Stream–batch reconciliation:** streaming output = batch truth for every closed window (117,227 requests, 33 windows, 0 lost). Surges match the local Python monitor exactly.
+
+**Lessons learned:**
+- **Backlog replay ≠ live.** Sinking a pre-filled topic produced files with up to 1.5 h of event-time disorder, and Spark's *global* watermark dropped 8.6% of events. Running the sink live reduced the disorder to ≤1 s.
+- **Watermark sizing = latency vs completeness.** 10 min tolerates live disorder; the cost is that results arrive 10 min late, and about 1,400 window states are held in memory.
+- **Table and checkpoint are a pair.** Dropping the table without its checkpoint made the stream skip all data (the checkpoint said "already processed").
