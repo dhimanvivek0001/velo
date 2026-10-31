@@ -33,6 +33,16 @@ dbt project (`dbt/velo`) on Databricks SQL Warehouse, building a tested star sch
 
 Replays real ride requests as a live event stream and detects demand surges per zone in real time.
 
+## Phase 4 — Real-time streaming with Kafka
+
+Replays real ride requests as a live event stream and detects demand surges per zone in real time.
+
+```
+TLC parquet -> producer.py -> Kafka topic ride_requests (3 partitions) -> surge_monitor.py -> surge alerts
+               (60x replay,                                               (5-min event-time windows,
+                key = pickup zone)                                         per-partition watermark,
+                                                                           baseline from fct_zone_hour)
+```
 
 | Component | What it does |
 |---|---|
