@@ -1,8 +1,9 @@
-"""Kafka -> Databricks volume sink (at-least-once, live).
+"""Kafka -> Databricks volume sink (at-least-once, live, with dead-letter queue).
 
-Reads ride requests from Kafka and uploads small JSON-lines files to the
-Unity Catalog volume, either every N seconds or every N events. Offsets are
-committed only AFTER a successful upload, so a crash never loses events.
+Validates every message against the data contract. Valid events are uploaded
+as small JSON-lines files to the Unity Catalog volume; invalid ones go to the
+ride_requests_dlq topic with the failure reason. Offsets are committed only
+after the upload AND the DLQ writes succeed, so nothing is ever lost.
 
 Live run: start this first, wait for "Ready", then start the producer.
     python streaming/kafka_to_volume.py
@@ -15,16 +16,19 @@ import io
 import json
 import os
 import time
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
-from confluent_kafka import Consumer, KafkaError
+from confluent_kafka import Consumer, KafkaError, Producer
+from contract import validate
 from databricks.sdk import WorkspaceClient
 from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(PROJECT_ROOT / ".env")
 TOPIC = "ride_requests"
+DLQ_TOPIC = "ride_requests_dlq"
 VOLUME_ROOT = "/Volumes/velo/landing/raw/stream"
 
 
@@ -40,11 +44,13 @@ def upload_batch(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Kafka -> Databricks volume sink")
+    parser = argparse.ArgumentParser(
+        description="Kafka -> Databricks volume sink with DLQ"
+    )
     parser.add_argument("--bootstrap", default="localhost:9092")
-    parser.add_argument("--group", default="velo-volume-sink-live")
+    parser.add_argument("--group", default="velo-volume-sink-v2")
     parser.add_argument(
-        "--dir", default="ride_requests_live", help="folder inside the volume"
+        "--dir", default="ride_requests_v2", help="folder inside the volume"
     )
     parser.add_argument(
         "--offset-reset", default="latest", choices=["latest", "earliest"]
@@ -72,10 +78,25 @@ def main() -> None:
             f"Ready: listening on {len(parts)} partitions. Start the producer now."
         ),
     )
+    dlq = Producer({"bootstrap.servers": args.bootstrap, "acks": "all"})
 
     buffer: list[str] = []
+    reasons: Counter = Counter()
     batch_no = total = idle = 0
     last_flush = time.monotonic()
+
+    def send_to_dlq(msg, reason: str) -> None:
+        value = msg.value()
+        record = {
+            "error": reason,
+            "raw": value.decode("utf-8", errors="replace") if value else None,
+            "source_partition": msg.partition(),
+            "source_offset": msg.offset(),
+            "failed_at": datetime.now(timezone.utc).isoformat(),
+        }
+        dlq.produce(DLQ_TOPIC, value=json.dumps(record))
+        dlq.poll(0)
+        reasons[reason] += 1
 
     def flush() -> None:
         nonlocal buffer, batch_no, total, last_flush
@@ -84,9 +105,13 @@ def main() -> None:
             return
         batch_no += 1
         path = upload_batch(ws, volume_dir, buffer, batch_no)
-        consumer.commit(asynchronous=False)  # upload succeeded -> safe to commit
+        dlq.flush(10)  # make sure dead letters are stored too
+        consumer.commit(asynchronous=False)  # both succeeded -> safe to commit
         total += len(buffer)
-        print(f"  uploaded {len(buffer):,} events -> {path.rsplit('/', 1)[-1]}")
+        print(
+            f"  uploaded {len(buffer):,} events -> {path.rsplit('/', 1)[-1]}"
+            f" | dead letters so far: {sum(reasons.values())}"
+        )
         buffer = []
 
     print(
@@ -102,11 +127,11 @@ def main() -> None:
                     print(f"Kafka error: {msg.error()}")
             else:
                 idle = 0
-                try:
-                    json.loads(msg.value())  # only forward valid JSON
-                    buffer.append(msg.value().decode("utf-8"))
-                except (ValueError, TypeError):
-                    pass
+                event, reason = validate(msg.value())
+                if reason:
+                    send_to_dlq(msg, reason)
+                else:
+                    buffer.append(json.dumps(event))
 
             due = time.monotonic() - last_flush >= args.flush_seconds
             if len(buffer) >= args.batch_size or (buffer and due):
@@ -117,8 +142,14 @@ def main() -> None:
         print("Stopped by user.")
     finally:
         flush()
+        dlq.flush(10)
         consumer.close()
-    print(f"Done: {total:,} events in {batch_no} files")
+
+    print(
+        f"Done: {total:,} valid events in {batch_no} files, {sum(reasons.values())} dead letters"
+    )
+    for reason, n in reasons.most_common():
+        print(f"   DLQ {reason:<35} {n}")
 
 
 if __name__ == "__main__":

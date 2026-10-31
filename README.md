@@ -66,3 +66,17 @@ TLC parquet -> producer.py -> Kafka topic ride_requests (3 partitions) -> surge_
 - **Backlog replay ≠ live.** Sinking a pre-filled topic produced files with up to 1.5 h of event-time disorder, and Spark's *global* watermark dropped 8.6% of events. Running the sink live reduced the disorder to ≤1 s.
 - **Watermark sizing = latency vs completeness.** 10 min tolerates live disorder; the cost is that results arrive 10 min late, and about 1,400 window states are held in memory.
 - **Table and checkpoint are a pair.** Dropping the table without its checkpoint made the stream skip all data (the checkpoint said "already processed").
+### Phase 4.5 — Data contract, dead-letter queue, idempotency (chaos-tested)
+
+- `streaming/contract.py`: every event must have `event_id`, `schema_version`, a valid ISO `event_time`, a known company and zones 1–265. Failures return a specific reason.
+- The sink routes invalid events to `ride_requests_dlq` with the error, raw payload and source partition/offset. Offsets are committed only after the upload **and** the DLQ writes succeed.
+- The producer emits a deterministic `event_id`; Spark applies `dropDuplicatesWithinWatermark(event_id)` before windowing.
+
+**Chaos test:** the producer re-sent 1 in 100 events (simulated retries) and injected 1 malformed event per 500 (5 failure types).
+
+| | Result |
+|---|---|
+| Messages sent | 129,604 = 128,068 real + 1,280 duplicates + 256 malformed |
+| Routed to DLQ | 256 / 256 (52 invalid JSON, 51 missing field, 51 bad zone, 51 bad timestamp, 51 unknown company) |
+| Unique events after dedupe | 128,068 |
+| Streaming result | 117,227 requests in 33 closed windows, **identical to the clean run**, 0 difference per window vs batch truth |
