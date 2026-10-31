@@ -90,3 +90,22 @@ TLC parquet -> producer.py -> Kafka topic ride_requests (3 partitions) -> surge_
 **Incident drill:** the producer replayed 41,851 events; the sink container was stopped mid-stream. Lag climbed to 34,654 → ALERT; the sink was restarted → one catch-up upload of **exactly 34,654** events → RECOVERED. No loss, no duplicates.
 
 **Bug found:** the Kafka volume was mounted at `/var/lib/kafka/data`, but the image writes to `/tmp/kraft-combined-logs` by default, so topics vanished when the container was recreated. Fixed with `KAFKA_LOG_DIRS` and verified with `--force-recreate`.
+
+
+## Phase 2 — Bronze & silver layers on Databricks ✅
+
+Medallion architecture on Delta Lake (Unity Catalog `velo`), built with PySpark notebooks in `databricks/`.
+
+| Table | Rows | What it is |
+|---|---|---|
+| `velo.bronze.hvfhv_trips` | 239,600,971 | Raw HVFHV trips (Jul 2024 – Jun 2025) via Auto Loader (`availableNow`, checkpointed) |
+| `velo.silver.hvfhv_trips` | 239,591,318 | Cleaned, typed and renamed, with derived metrics (wait, speed, fare per mile, driver take rate) and quality flags |
+| `velo.silver.hvfhv_trips_quarantine` | 9,653 | Rows failing hard rules, kept with the reason (not deleted) |
+| `velo.silver.weather_hourly` | 8,760 | Hourly NYC weather (Open-Meteo), one row per hour |
+| `velo.silver.events` | 271,471 | NYC permitted events (Socrata API, paginated, with a completeness check) |
+
+**Engineering highlights**
+- **Reconciliation:** bronze = silver + quarantine, exactly (239,600,971 = 239,591,318 + 9,653).
+- **Idempotent ingestion:** re-running Auto Loader added 0 rows (the checkpoint tracks processed files).
+- **Performance:** liquid clustering on `pickup_date, pu_location_id`, with Delta statistics limited to the filter columns (`delta.dataSkippingStatsColumns`), then `OPTIMIZE`.
+- **Backfill decision (ADR 0001):** a laptop → S3 → Databricks backfill projected ~17 h on home upload speeds; switching to direct ingestion into a Databricks volume loaded 11 months in ~2 minutes. See `docs/decisions/0001-databricks-direct-ingest.md`.
