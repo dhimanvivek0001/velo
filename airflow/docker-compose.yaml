@@ -1,7 +1,7 @@
-# Velo - Airflow in standalone mode (one container: scheduler + web UI + database)
+﻿# Velo - Airflow in standalone mode (one container: scheduler + web UI + database)
 services:
   airflow:
-    image: apache/airflow:3.3.2-python3.11
+    build: .
     container_name: velo-airflow
     command: standalone
     ports:
@@ -22,6 +22,7 @@ services:
       # Your credentials, READ-ONLY, so the container can reach AWS + Databricks
       - ${USERPROFILE}/.aws:/home/airflow/.aws:ro
       - ${USERPROFILE}/.databrickscfg:/home/airflow/.databrickscfg:ro
+      - ~/.dbt:/home/airflow/.dbt:ro
 
 volumes:
   airflow-home:
