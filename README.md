@@ -109,3 +109,18 @@ Medallion architecture on Delta Lake (Unity Catalog `velo`), built with PySpark 
 - **Idempotent ingestion:** re-running Auto Loader added 0 rows (the checkpoint tracks processed files).
 - - **Performance (measured honestly):** liquid clustering on `pickup_date, pu_location_id` plus Delta stats on the filter columns. Benchmark (zone + day filter, 6 dates, warm-up, interleaved, median): bronze 1.32 s vs silver 1.08 s, **1.2×**. A naive first run showed 2.8×, but that was a serverless cold-start artefact. At this scale queries are overhead-bound (~1 s) and bronze is already date-ordered from monthly loads, so clustering's benefit would show at larger scale or in bytes scanned, not wall-clock time.
 - **Backfill decision (ADR 0001):** a laptop → S3 → Databricks backfill projected ~17 h on home upload speeds; switching to direct ingestion into a Databricks volume loaded 11 months in ~2 minutes. See `docs/decisions/0001-databricks-direct-ingest.md`.
+## Phase 5 — Data quality & monitoring ✅
+
+**5.1 Business-rule and range tests** (`dbt_utils`, `store_failures: true` saves failing rows to `gold_dbt_test__audit`).
+- Rules: CBD fee only on trips ending after 5 Jan 2025, fee trips ≤ total trips, Uber + Lyft = all trips, plausible ranges for waits, shares and temperature. `warn` for "unusual but possible", `error` for "impossible".
+- **Finding:** an hourly version of the CBD rule failed on 157 zone-hours, all on the evening of 4 Jan 2025. Trips picked up before midnight that entered the zone after it were legitimately charged. The rule was moved to trip level (dropoff time) and passed on all 240M trips, so the rule was wrong, not the data.
+
+**5.2 Volume anomaly detection** (`dq_daily_volume`): daily trips vs the same weekday over the previous 4 weeks; anomaly if more than 25% off.
+- One year produced 3 anomalies: Christmas Day (a holiday) and 26–27 Dec (−31%, −27%). Completeness was verified (all 24 hours, about 258 zones present), confirming a real-world holiday-week drop, then annotated in a version-controlled `known_events` seed so it no longer warns.
+
+**5.3 DQ history** (`dq_test_history`): an `on-run-end` macro logs every test result (status, failures, timing, model) per run, which is the basis for a quality-over-time dashboard.
+
+**5.4 Orchestration** (`airflow/dags/dbt_quality.py`): daily `warm_warehouse → dbt_deps → dbt_build → dq_summary`, with dbt in an isolated venv inside a custom Airflow image and credentials mounted read-only.
+- Self-healing: the first runs failed on warehouse cold starts (`Cannot create the resource`). I added a warm-up task (start the warehouse and wait until RUNNING), exponential-backoff retries (2/4/8 min), `max_active_runs=1` and a failure-alert callback. In the next incident the warm-up failed 3 times on capacity and succeeded on try 4 with no manual action.
+
+*Freshness checks were deliberately omitted: the dataset is historical (ends Jun 2025), so recency tests would always fail.*
