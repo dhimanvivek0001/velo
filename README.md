@@ -124,3 +124,33 @@ Medallion architecture on Delta Lake (Unity Catalog `velo`), built with PySpark 
 - Self-healing: the first runs failed on warehouse cold starts (`Cannot create the resource`). I added a warm-up task (start the warehouse and wait until RUNNING), exponential-backoff retries (2/4/8 min), `max_active_runs=1` and a failure-alert callback. In the next incident the warm-up failed 3 times on capacity and succeeded on try 4 with no manual action.
 
 *Freshness checks were deliberately omitted: the dataset is historical (ends Jun 2025), so recency tests would always fail.*
+
+## Phase 10 — Power BI dashboard ✅
+
+Power BI report on the gold star schema (Import mode from the Databricks SQL warehouse), saved as a **Power BI Project (`.pbip`)** so the report and model are version-controlled as text in `powerbi/`.
+
+**Model:** `fct_zone_hour` → `dim_zone`, `dim_date` (marked as the date table), plus `dq_daily_volume` and `dq_test_history`. Trip-weighted DAX measures (a simple average of zone-hour medians would over-weight quiet zones).
+
+### 1. Marketplace overview
+![Overview](docs/images/dashboard_overview.png)
+- 239,591,318 trips (matches the dbt reconciliation exactly); Uber 73.9% share.
+- Saturday is the busiest day (~33% above Monday): demand is leisure-driven, not commute-driven.
+- The outer boroughs together out-trip Manhattan; ride-hail isn't a Manhattan-only product.
+
+### 2. Service quality
+![Service quality](docs/images/dashboard_service.png)
+- Staten Island riders wait ~30% longer than Manhattan (5.2 vs 4.0 min), worst 00:00–05:00 at ~7 min.
+- Worst moment: ~4 am on weekends (5.4 min). Weekdays add a 7–8 am commute spike.
+- Newark Airport is a 5× outlier (~22 min typical wait, 61% wait 10+ min), a supply gap, handled as an explicit callout so it doesn't distort the charts.
+
+### 3. Congestion pricing (from 5 Jan 2025)
+![Congestion pricing](docs/images/dashboard_cbd.png)
+- Manhattan-core daily trips grew ~1% vs ~5% in the rest of NYC, a ~4-point gap.
+- 34.6% of ride-hail trips paid the CBD fee once it started.
+- Typical wait in the core: X.X → Y.Y min.
+- A first estimate only: tested rigorously with difference-in-differences in Phase 8.
+
+### 4. Data quality
+![Data quality](docs/images/dashboard_dq.png)
+- 30 automated tests per daily Airflow run: 0 failures, 2 known and stable warnings.
+- Volume monitor: 3 anomalous days in a year, all explained (Christmas week) and annotated.
