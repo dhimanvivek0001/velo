@@ -12,3 +12,6 @@ pyarrow>=16.0             # Read and write Parquet files (fast, compressed)
 dbt-databricks>=1.9,<2.0   # dbt + the Databricks adapter
 # Phase 4 - streaming
 confluent-kafka>=2.5
+# Phase 8 - causal analysis
+statsmodels>=0.14
+matplotlib>=3.8

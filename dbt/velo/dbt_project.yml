@@ -19,6 +19,8 @@ models:
       +materialized: table
     monitoring:
       +materialized: table
+    causal:
+      +materialized: table
 
 seeds:
   velo:
