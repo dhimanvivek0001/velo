@@ -31,3 +31,6 @@ mlruns/
 
 # dbt seeds are small reference data and SHOULD be version-controlled
 !dbt/velo/seeds/*.csv
+
+# Power BI binary (contains imported data)
+*.pbix
