@@ -1,8 +1,8 @@
 # Velo — Ride-Hailing Marketplace Intelligence Platform
 
-End-to-end data platform on **~240 million real NYC ride-hail trips** (Uber & Lyft, Jul 2024 – Jun 2025): batch and streaming ingestion, a tested lakehouse, data quality monitoring and a business dashboard. It answers where and when riders wait too long, how demand moves, and what congestion pricing did to Manhattan.
+End-to-end data platform on **360 million real NYC ride-hail trips** (Uber & Lyft, Jan 2024 – Jun 2025): batch and streaming ingestion, a tested lakehouse, data quality monitoring, a business dashboard and a causal policy evaluation. It answers where and when riders wait too long, how demand moves, and what congestion pricing did to Manhattan.
 
-**Stack:** Python · Airflow 3 · Databricks (PySpark, Delta Lake, Unity Catalog, Structured Streaming) · dbt · AWS S3/IAM · Kafka · Docker · Power BI
+**Stack:** Python · Airflow 3 · Databricks (PySpark, Delta Lake, Unity Catalog, Structured Streaming) · dbt · AWS S3/IAM · Kafka · Docker · Power BI · statsmodels
 
 ---
 
@@ -20,11 +20,11 @@ End-to-end data platform on **~240 million real NYC ride-hail trips** (Uber & Ly
 
 | Area | Result |
 |---|---|
-| Scale | 239,591,318 trips reconciled exactly at every layer (raw → bronze → silver → gold → dashboard) |
-| Data quality | 30 automated tests per daily run: 0 failures; 3 volume anomalies in a year, all explained |
+| **Policy impact** | **Congestion pricing cut ride-hail pickups in the charging zone by 6.8% (95% CI 4.9–8.7%): ~12,300 fewer per day.** Robust to seasonal, year-over-year, placebo and donut checks |
+| Scale | 360,465,639 raw trips reconciled exactly at every layer (raw → bronze → silver + quarantine → gold) |
+| Data quality | 30 automated tests per daily run: 0 failures; volume anomalies all explained |
 | Streaming | Chaos test with 1% duplicates + 0.2% malformed events: result identical to the clean run; incident drill with 0 loss |
 | Service | Staten Island riders wait ~30% longer than Manhattan; Newark Airport is a 5× wait outlier |
-| Policy | After congestion pricing, Manhattan-core trips grew ~1% vs ~5% elsewhere (a ~4-point gap, first estimate) |
 
 ## Project status
 
@@ -35,7 +35,7 @@ End-to-end data platform on **~240 million real NYC ride-hail trips** (Uber & Ly
 - [x] Phase 4 — Real-time streaming
 - [x] Phase 5 — Data quality & monitoring
 - [x] Phase 10 — Power BI dashboard
-- [ ] Phase 8 — Causal analysis: congestion pricing (difference-in-differences)
+- [x] Phase 8 — Causal analysis: congestion pricing (difference-in-differences)
 - [ ] Phase 7 — Machine learning: demand forecast, wait-time model
 - [ ] Phase 6 — Feature store
 - [ ] Phase 9 — MLOps: model registry, API, CI/CD
@@ -48,7 +48,8 @@ End-to-end data platform on **~240 million real NYC ride-hail trips** (Uber & Ly
 | `ingestion/` | Python ingestion: TLC trips, weather API, events API |
 | `airflow/` | Airflow 3 (Docker): ingestion DAG, `dbt_quality` DAG, warehouse warm-up script |
 | `databricks/` | PySpark notebooks: bronze, silver, performance, streaming |
-| `dbt/velo/` | dbt project: staging, marts, monitoring models, tests, macros, seeds |
+| `dbt/velo/` | dbt project: staging, marts, monitoring and causal models, tests, macros, seeds |
+| `analysis/` | Causal analysis: difference-in-differences, event study, robustness checks |
 | `streaming/` | Kafka stack: producer, sink, contract, surge and lag monitors, Docker services |
 | `bi/` | Power BI project (`.pbip`, version-controlled as text) |
 | `docs/` | Architecture decisions (ADRs), data profile, images |
@@ -66,13 +67,15 @@ End-to-end data platform on **~240 million real NYC ride-hail trips** (Uber & Ly
 
 | Source | Volume | Method |
 |---|---|---|
-| NYC TLC high-volume for-hire trips | 12 months, ~240M rows | Monthly parquet download, validation, upload to S3 and a Databricks volume |
+| NYC TLC high-volume for-hire trips | 18 months (Jan 2024 – Jun 2025), ~360M rows | Monthly parquet download, validation, upload to S3 and a Databricks volume |
 | Open-Meteo hourly weather | 8,760 hours | REST API, NYC coordinates, local time |
 | NYC permitted events (Socrata) | 271,471 events | Paginated API (`$limit`/`$offset`/`$order`) with a completeness check against the source count |
 
 - **Airflow 3** in Docker with the TaskFlow API: `pick_month → download → validate → upload_s3 → upload_databricks`, with weather and events in parallel. Retries and timeouts on every task.
 - Resilient uploads: adaptive retries, tuned multipart transfers, progress callbacks, atomic file writes.
 - **Backfill decision ([ADR 0001](docs/decisions/0001-databricks-direct-ingest.md)):** the laptop → S3 → Databricks route projected ~17 h on home upload speeds; ingesting directly into a Databricks volume loaded 11 months in ~2 minutes.
+- **Extending history was a re-run, not a rebuild:** Jan–Jun 2024 was added later for the causal analysis by widening the backfill window. The idempotent backfill skipped existing months and Auto Loader's checkpoint read only the 6 new files.
+- Weather and events cover Jul 2024 onwards; Jan–Jun 2024 trips have no weather context (not needed by the causal analysis).
 
 ## Phase 2 — Bronze & silver layers on Databricks ✅
 
@@ -80,13 +83,14 @@ Medallion architecture on Delta Lake, built with PySpark notebooks in `databrick
 
 | Table | Rows | What it is |
 |---|---|---|
-| `velo.bronze.hvfhv_trips` | 239,600,971 | Raw trips via Auto Loader (`availableNow`, checkpointed) |
-| `velo.silver.hvfhv_trips` | 239,591,318 | Cleaned, typed and renamed, with derived metrics (wait, speed, fare per mile, driver take rate) and quality flags |
+| `velo.bronze.hvfhv_trips` | 360,465,639 | Raw trips via Auto Loader (`availableNow`, checkpointed) |
+| `velo.silver.hvfhv_trips` | 360,455,986 | Cleaned, typed and renamed, with derived metrics (wait, speed, fare per mile, driver take rate) and quality flags |
 | `velo.silver.hvfhv_trips_quarantine` | 9,653 | Rows failing hard rules, kept with the reason (not deleted) |
 | `velo.silver.weather_hourly` | 8,760 | Hourly NYC weather, one row per hour |
 | `velo.silver.events` | 271,471 | NYC permitted events |
 
-- **Reconciliation:** bronze = silver + quarantine, exactly (239,600,971 = 239,591,318 + 9,653).
+- **Reconciliation:** bronze = silver + quarantine, exactly (360,465,639 = 360,455,986 + 9,653).
+- **Investigated a "too clean" result:** adding 120.9M rows added zero quarantined rows. All 9,653 quarantined rows turned out to come from one event, the daylight-saving fall-back on 3 Nov 2024, when the repeated 1 am hour makes local-time trips look negative. Spring-forward changes don't cause that, so zero new quarantine was correct. A passing reconciliation proves nothing was lost, not that every row is in the right table, so that was verified separately.
 - **Idempotent ingestion:** re-running Auto Loader added 0 rows (the checkpoint tracks processed files).
 - **Performance, measured honestly:** liquid clustering on `pickup_date, pu_location_id` plus Delta stats on the filter columns. A proper benchmark (zone + day filter, 6 dates, warm-up, interleaved runs, median) gave bronze 1.32 s vs silver 1.08 s, i.e. **1.2×**. A naive first run showed 2.8×, but that was a serverless cold-start artefact. At this scale queries are overhead-bound (~1 s) and bronze is already date-ordered, so clustering's benefit would show at larger scale or in bytes scanned rather than wall-clock time.
 
@@ -103,7 +107,7 @@ dbt project (`dbt/velo`) on a Databricks SQL warehouse, building a tested star s
 | Staging | `stg_trips`, `stg_zones`, `stg_weather`, `stg_events` | views |
 | Marts | `dim_zone`, `dim_date`, `fct_zone_hour` | tables |
 
-- **`fct_zone_hour`**: one row per pickup zone per hour. 239.6M trips → 2.2M rows (~108× smaller), with demand, median/p90 wait, revenue, weather, events, holiday and congestion-pricing flags.
+- **`fct_zone_hour`**: one row per pickup zone per hour, with demand, median/p90 wait, revenue, weather, events, holiday and congestion-pricing flags (the 12-month version reduced 239.6M trips to 2.2M rows, ~108× smaller).
 - **Tests:** unique/not-null keys, referential integrity (trips → zones), a grain test (zone + hour) and a reconciliation test (sum of fact trips = source trip count).
 - **Finding:** the uniqueness test on `trip_id` flagged 2,988 colliding keys. Investigation showed all 6,059 rows were distinct trips (99.7% differ in dropoff time, distance and fare): same driver, request and pickup time, so likely multi-rider pickups. Fix: extend the surrogate key rather than delete real trips.
 
@@ -168,9 +172,34 @@ TLC parquet -> producer.py -> Kafka topic ride_requests (3 partitions) -> surge_
   - **Self-healing:** early runs failed on warehouse cold starts. Added a warm-up task, exponential-backoff retries (2/4/8 min), `max_active_runs=1` and a failure-alert callback. In the next incident the warm-up failed 3 times on capacity and succeeded on try 4 with no manual action.
 - Freshness checks were deliberately omitted: the dataset is historical (ends Jun 2025), so recency tests would always fail.
 
+## Phase 8 — Causal analysis: congestion pricing ✅
+
+**Question:** did Manhattan's congestion pricing (from 5 Jan 2025) reduce ride-hail demand in the charging zone, or is the drop just seasonality?
+
+**Answer:** pickups inside the zone fell by **6.8% (95% CI 4.9–8.7%)**, about **12,300 fewer per day** and ~2.1M fewer trips in the first six months. 📄 **[Full policy memo](docs/congestion_pricing_memo.md)**
+
+![Year-over-year by month](docs/images/did_yoy_by_month.png)
+
+**Design**
+- **Treatment defined from the data:** a trip starting inside the zone is always charged, so zones with ≥95% fee share after 5 Jan are inside. That gave 38 zones, all south of 60th Street. (The dashboard's broader "Yellow Zone" definition diluted the effect: −4.3 points vs −6.2% with the precise zone.)
+- **Outcome:** daily `ln(CBD pickups) − ln(rest-of-NYC pickups)`, so citywide shocks cancel out. Difference-in-differences with weekday and month-of-year controls and Newey-West standard errors; holidays excluded.
+- **Year-over-year control:** Jan–Jun 2024 was added so 2025 months could be compared with the **same months without the fee**.
+
+| Model | Effect | 95% CI |
+|---|---|---|
+| Simple (post + weekday) | −6.6% | −8.6 to −4.5 |
+| Seasonal (+ month of year) | −6.8% | −8.7 to −4.8 |
+| **Year-over-year (Jan–Jun 2025 vs 2024)** | **−6.8%** | **−8.7 to −4.9** |
+
+**Robustness:** parallel pre-trends over a full year (−0.13%/month, CI −0.67 to +0.41); placebo dates show no effect (7 Apr 2024: −1.4%, p = 0.44; 6 Oct 2024: +3.2%, p = 0.15); dropping the 7 boundary zones gives −7.0%.
+
+![Parallel trends](docs/images/did_parallel_trends.png)
+
+**Finding:** the effect deepened over time (−5% in January to −9% by June against the same months of 2024), consistent with riders adapting. The first event study couldn't separate this from seasonality; the year-over-year comparison could.
+
 ## Phase 10 — Power BI dashboard ✅
 
-Power BI report on the gold star schema (Import mode from the Databricks SQL warehouse), saved as a **Power BI Project (`.pbip`)** in `bi/`, so the report and model are version-controlled as text. Trip-weighted DAX measures (a simple average of zone-hour medians would over-weight quiet zones).
+Power BI report on the gold star schema (Import mode from the Databricks SQL warehouse), saved as a **Power BI Project (`.pbip`)** in `bi/`, so the report and model are version-controlled as text. Trip-weighted DAX measures (a simple average of zone-hour medians would over-weight quiet zones). *Screenshots show the Jul 2024 – Jun 2025 version; the rigorous congestion pricing estimate is in Phase 8.*
 
 ### 1. Marketplace overview
 ![Overview](docs/images/dashboard_overview.png)
@@ -189,9 +218,8 @@ Power BI report on the gold star schema (Import mode from the Databricks SQL war
 ### 3. Congestion pricing (from 5 Jan 2025)
 ![Congestion pricing](docs/images/dashboard_cbd.png)
 
-- Manhattan-core daily trips grew 1.1% vs 5.4% in the rest of NYC: a **4.3-point gap**.
+- Manhattan-core daily trips grew 1.1% vs 5.4% in the rest of NYC: a **4.3-point gap** (first estimate; see Phase 8 for the rigorous −6.8%).
 - About 1 in 3 ride-hail trips (34.6%) paid the CBD fee once it started.
-- A first estimate only: seasonality may differ between areas, so Phase 8 tests it with difference-in-differences.
 
 ### 4. Data quality
 ![Data quality](docs/images/dashboard_dq.png)
