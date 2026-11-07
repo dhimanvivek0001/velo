@@ -1,0 +1,60 @@
+version: 2
+
+models:
+  - name: fs_zone
+    description: "Feature table, ZONE entity. Static zone attributes + demand profile from the training period (< 2025-03-01)."
+    meta:
+      owner: velo-ml
+      entity: zone
+      primary_key: [zone_id]
+      point_in_time_safe: "yes - profile frozen at training cutoff (profile_as_of)"
+    columns:
+      - name: zone_id
+        description: "TLC pickup zone id (primary key)"
+        data_tests: [unique, not_null]
+      - name: profile_avg_hourly_trips
+        description: "Average trips per hour in the training period, i.e. zone size"
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+      - name: profile_night_share
+        description: "Share of the zone's trips picked up 00:00-05:59"
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+      - name: profile_zero_hour_share
+        description: "Share of hours with zero trips (how sparse the zone is)"
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+      - name: profile_weekend_lift
+        description: "Average weekend-hour trips / average weekday-hour trips"
+
+  - name: fs_calendar
+    description: "Feature table, DATE entity. Holidays, long weekends and distance to holidays; known in advance."
+    meta:
+      owner: velo-ml
+      entity: date
+      primary_key: [date_day]
+      point_in_time_safe: "yes - calendar is known ahead of time"
+    data_tests:
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "not is_long_weekend or is_day_off"
+    columns:
+      - name: date_day
+        description: "Calendar day (primary key)"
+        data_tests: [unique, not_null]
+      - name: is_long_weekend
+        description: "Day off that is part of a run of 3+ consecutive days off"
+        data_tests: [not_null]
+      - name: days_to_next_holiday
+        description: "Days until the next federal holiday (null after the last known holiday)"
+      - name: days_since_last_holiday
+        description: "Days since the previous federal holiday (null before the first one)"

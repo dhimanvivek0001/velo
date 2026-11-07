@@ -23,6 +23,9 @@ models:
       +materialized: table
     ml:
       +materialized: table
+    features:
+      +materialized: table
+      +schema: features
 
 seeds:
   velo:
@@ -32,4 +35,4 @@ seeds:
 
 data_tests:
   velo:
-    +store_failures: true  # save failing rows to a table for inspection
+    +store_failures: true

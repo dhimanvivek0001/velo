@@ -1,4 +1,4 @@
-﻿# Velo - Airflow in standalone mode (one container: scheduler + web UI + database)
+# Velo - Airflow in standalone mode (one container: scheduler + web UI + database)
 services:
   airflow:
     build: .

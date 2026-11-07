@@ -1,4 +1,4 @@
-﻿confluent-kafka==2.16.1
+confluent-kafka==2.16.1
 databricks-sdk==0.117.0
 numpy==2.4.6
 pandas==2.3.3

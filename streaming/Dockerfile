@@ -1,4 +1,4 @@
-﻿# Image for all Velo streaming apps (producer, sink, lag monitor)
+# Image for all Velo streaming apps (producer, sink, lag monitor)
 FROM python:3.11-slim
 
 ENV PYTHONUNBUFFERED=1 \

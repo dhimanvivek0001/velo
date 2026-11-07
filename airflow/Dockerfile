@@ -1,4 +1,4 @@
-﻿# Airflow + dbt in an isolated virtual environment (avoids dependency conflicts)
+# Airflow + dbt in an isolated virtual environment (avoids dependency conflicts)
 FROM apache/airflow:3.3.2-python3.11
 
 RUN python -m venv /home/airflow/dbt_venv \
