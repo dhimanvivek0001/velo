@@ -9,13 +9,14 @@
 -- (before 2025-03-01), so validation and test months never leak into the features.
 
 with attrs as (
-    select distinct zone_id, borough, is_manhattan_core, is_airport
-    from {{ ref('ml_zone_hour_features') }}
+    select zone_id, borough, is_manhattan_core, is_airport
+    from {{ ref('dim_zone') }}
+    where borough not in ('EWR', 'N/A', 'Unknown')
 ),
 
 hist as (
-    select zone_id, hour_of_day, day_of_week, trips
-    from {{ ref('ml_zone_hour_features') }}
+    select zone_id, hour(hour_ts) as hour_of_day, dayofweek(hour_ts) as day_of_week, trips
+    from {{ ref('zone_hour_observations') }}
     where hour_ts < timestamp'2025-03-01 00:00:00'
 )
 

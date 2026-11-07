@@ -1,13 +1,21 @@
 version: 2
 
 models:
+  - name: zone_hour_observations
+    description: "Raw history for the feature store: complete zone x hour grid of actual trips (zeros included)."
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [zone_id, hour_ts]
+
   - name: fs_zone
     description: "Feature table, ZONE entity. Static zone attributes + demand profile from the training period (< 2025-03-01)."
-    meta:
-      owner: velo-ml
-      entity: zone
-      primary_key: [zone_id]
-      point_in_time_safe: "yes - profile frozen at training cutoff (profile_as_of)"
+    config:
+      meta:
+        owner: velo-ml
+        entity: zone
+        primary_key: [zone_id]
+        point_in_time_safe: "yes - profile frozen at training cutoff (profile_as_of)"
     columns:
       - name: zone_id
         description: "TLC pickup zone id (primary key)"
@@ -38,11 +46,12 @@ models:
 
   - name: fs_calendar
     description: "Feature table, DATE entity. Holidays, long weekends and distance to holidays; known in advance."
-    meta:
-      owner: velo-ml
-      entity: date
-      primary_key: [date_day]
-      point_in_time_safe: "yes - calendar is known ahead of time"
+    config:
+      meta:
+        owner: velo-ml
+        entity: date
+        primary_key: [date_day]
+        point_in_time_safe: "yes - calendar is known ahead of time"
     data_tests:
       - dbt_utils.expression_is_true:
           arguments:
@@ -58,3 +67,43 @@ models:
         description: "Days until the next federal holiday (null after the last known holiday)"
       - name: days_since_last_holiday
         description: "Days since the previous federal holiday (null before the first one)"
+
+  - name: fs_zone_hour_demand
+    description: "Feature table, ZONE x HOUR entity for a 24h-ahead forecast. Every value known at available_at = hour_ts - 24h."
+    config:
+      meta:
+        owner: velo-ml
+        entity: zone_hour
+        primary_key: [zone_id, hour_ts]
+        timestamp_key: available_at
+        point_in_time_safe: "yes - all windows end 24 rows before hour_ts; enforced by assert_fs_demand_point_in_time"
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [zone_id, hour_ts]
+    columns:
+      - name: available_at
+        description: "When every value in this row became known (hour_ts - 24h)"
+        data_tests: [not_null]
+      - name: trend_7d_vs_28d
+        description: "Last 7 days' average / last 28 days' average. Above 1 = zone getting busier"
+      - name: yday_vs_4wk_ratio
+        description: "(same hour yesterday + 1) / (4-week same-hour average + 1). Flags unusual days"
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+
+  - name: fs_weather_hour
+    description: "Feature table, HOUR entity (city-wide weather). Actual weather stands in for a 24h-ahead forecast."
+    config:
+      meta:
+        owner: velo-ml
+        entity: hour
+        primary_key: [weather_hour]
+        timestamp_key: available_at
+        point_in_time_safe: "assumption - actuals used as a proxy for the forecast issued at available_at"
+    columns:
+      - name: weather_hour
+        description: "Hour (primary key)"
+        data_tests: [unique, not_null]
