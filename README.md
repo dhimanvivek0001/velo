@@ -1,8 +1,10 @@
 # Velo — Ride-Hailing Marketplace Intelligence Platform
 
-End-to-end data platform on **360 million real NYC ride-hail trips** (Uber & Lyft, Jan 2024 – Jun 2025): batch and streaming ingestion, a tested lakehouse, data quality monitoring, a business dashboard and a causal policy evaluation. It answers where and when riders wait too long, how demand moves, and what congestion pricing did to Manhattan.
+[![CI](https://github.com/dhimanvivek0001/velo/actions/workflows/ci.yml/badge.svg)](https://github.com/dhimanvivek0001/velo/actions/workflows/ci.yml)
 
-**Stack:** Python · Airflow 3 · Databricks (PySpark, Delta Lake, Unity Catalog, Structured Streaming) · dbt · AWS S3/IAM · Kafka · Docker · Power BI · statsmodels
+End-to-end data platform on **360 million real NYC ride-hail trips** (Uber & Lyft, Jan 2024 – Jun 2025): batch and streaming ingestion, a tested lakehouse, data quality monitoring, a business dashboard, a causal policy evaluation, and a day-ahead demand forecast served through a tested API with a feature store, model registry, CI and monitoring. It answers where and when riders wait too long, how demand moves, and what congestion pricing did to Manhattan.
+
+**Stack:** Python · Airflow 3 · Databricks (PySpark, Delta Lake, Unity Catalog, Structured Streaming) · dbt · AWS S3/IAM · Kafka · Docker · Power BI · statsmodels · LightGBM · MLflow · FastAPI · GitHub Actions
 
 ---
 
@@ -25,6 +27,7 @@ End-to-end data platform on **360 million real NYC ride-hail trips** (Uber & Lyf
 | Data quality | 30 automated tests per daily run: 0 failures; volume anomalies all explained |
 | Streaming | Chaos test with 1% duplicates + 0.2% malformed events: result identical to the clean run; incident drill with 0 loss |
 | Forecasting | Day-ahead zone-hour demand model (LightGBM, Poisson): 9% less error than a 4-week rule on unseen months (WAPE 12.3% vs 13.6%); holiday error cut by a third |
+| MLOps | Model registry with a written promotion gate (challenger blocked), FastAPI serving from an online feature store, 8 tests incl. a training–serving skew test, CI green on every push, daily accuracy / drift / completeness monitoring |
 | Feature store | 5 time-stamped feature tables in Unity Catalog; point-in-time training set reproduces the Phase 7 data with 0 differences across 3.26M rows; a hidden date-fingerprint feature caught and fixed |
 | Service | Staten Island riders wait ~30% longer than Manhattan; Newark Airport is a 5× wait outlier |
 
@@ -40,7 +43,7 @@ End-to-end data platform on **360 million real NYC ride-hail trips** (Uber & Lyf
 - [x] Phase 8 — Causal analysis: congestion pricing (difference-in-differences)
 - [x] Phase 7 — Machine learning: day-ahead demand forecast
 - [x] Phase 6 — Feature store (point-in-time, built on Phase 7's findings)
-- [ ] Phase 9 — MLOps: model registry, API, CI/CD
+- [x] Phase 9 — MLOps: model registry, API, tests, CI/CD, monitoring
 - [ ] Phase 11 — GenAI copilot & board memo
 
 ## Repository structure
@@ -53,6 +56,9 @@ End-to-end data platform on **360 million real NYC ride-hail trips** (Uber & Lyf
 | `dbt/velo/` | dbt project: staging, marts, monitoring, causal, ML and feature-store models, tests, macros, seeds |
 | `analysis/` | Causal analysis: difference-in-differences, event study, robustness checks |
 | `forecasting/` | Demand forecasting: baselines, LightGBM training (MLflow), evaluation, SHAP, feature-store ablation (`train_fs.py`) |
+| `serving/` | FastAPI forecast API, online feature store sync, daily model monitoring |
+| `tests/` | pytest: API contract tests (fixture model) and training–serving skew test |
+| `.github/workflows/` | CI: pre-commit hooks, API tests, dbt parse on every push |
 | `streaming/` | Kafka stack: producer, sink, contract, surge and lag monitors, Docker services |
 | `bi/` | Power BI project (`.pbip`, version-controlled as text) |
 | `docs/` | Architecture decisions (ADRs), data profile, images |
@@ -262,6 +268,39 @@ Experiments tracked in **MLflow** (parameters, metrics, model artifacts, git com
 ![Parallel trends](docs/images/did_parallel_trends.png)
 
 **Finding:** the effect deepened over time (−5% in January to −9% by June against the same months of 2024), consistent with riders adapting. The first event study couldn't separate this from seasonality; the year-over-year comparison could.
+
+## Phase 9 — MLOps: registry, serving, CI/CD, monitoring ✅
+
+The forecast goes from a training script to something a team can run, trust and change safely.
+
+**9.1 Model registry** (`forecasting/register_model.py`, MLflow): both models are registered as versions of `velo-demand-forecast`, each tagged with its feature list, training table, git commit and metrics. Production loads the **`@champion` alias**, so promotion or rollback means moving an alias, with no code change. A written **promotion gate** decides: a challenger must beat the champion's test WAPE by more than **0.2 points** (the noise level measured in Phase 6). The Phase 6 challenger (12.39% vs 12.34%) was **blocked** and kept as `@challenger`. A reproducibility check reloads `@champion` from the registry and recomputes the test WAPE: **12.3407% = 12.3407%** logged at training.
+
+**9.2 Serving** (`serving/`): a **FastAPI** service (`GET /forecast/{zone_id}?date=…`, `GET /health`, auto-generated docs at `/docs`).
+- Features come from an **online feature store**: a small snapshot synced from the offline Delta feature tables (`materialize_online.py`) with the same joins as the training set. On paid Databricks tiers this would be an Online Table.
+- Every forecast hour returns its `available_at` (24 hours earlier), so the point-in-time guarantee is visible in the response.
+- **Skew guard:** categorical codes (zones, boroughs) come from the trained model, not from the request, so a one-zone request can't silently shift codes.
+
+**9.3 Tests and CI** (`tests/`, `.github/workflows/ci.yml`):
+
+| Check | Where | What it proves |
+|---|---|---|
+| 7 API contract tests | CI + local | 24 non-negative point-in-time hours, 404 / 422 handling, categories from the model, same prediction alone or in a batch. Run against a **fixture model and registry**, so CI needs no Databricks |
+| **Training–serving skew test** | Local (needs real data) | Online-store features equal the training-set features for the same zone-hours, column by column |
+| Pre-commit hooks | CI + every commit | ruff, YAML, BOM, end-of-file, AWS keys, private keys |
+| `dbt parse` | CI | Every model, test and macro compiles (dummy profile, no connection) |
+
+CI runs on every push and was green on its first run.
+
+**9.4 Monitoring** (`serving/monitor.py`; exits with code 1 on an alert, so a scheduler marks the run failed):
+
+| Monitor | Rule | Result (17–30 Jun 2025) |
+|---|---|---|
+| Accuracy | Alert if 3-day rolling WAPE > 1.25 × training WAPE (15.4%) | Peak 14.9%, no alert. Model beat the 4-week baseline on **12 of 14 days**; worst day Juneteenth (19.2% vs baseline 23.7%) |
+| Drift (demand features) | Alert if PSI > 0.25 | Lags and averages stable (PSI ≤ 0.02) |
+| Drift (seasonal inputs) | Reported, never alerted | Temperature PSI 4.9: expected seasonality |
+| Completeness | Alert if > 5% missing while serving | 0% missing while serving |
+
+**What monitoring found:** the first version alerted on temperature (PSI 7.7). Investigation showed this was correct seasonality, since a two-week June window can never match a year-round reference. So the rules were split: PSI alerts for demand features, completeness alerts for external feeds. The same investigation uncovered a real data gap: **weather is missing for Jan–Jun 2024, 38.8% of the training period**. That explains part of temperature's small role in the model. Backfilling that history is the next fix.
 
 ## Phase 10 — Power BI dashboard ✅
 
