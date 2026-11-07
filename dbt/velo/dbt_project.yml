@@ -21,6 +21,8 @@ models:
       +materialized: table
     causal:
       +materialized: table
+    ml:
+      +materialized: table
 
 seeds:
   velo:

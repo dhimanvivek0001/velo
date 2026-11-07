@@ -15,3 +15,6 @@ confluent-kafka>=2.5
 # Phase 8 - causal analysis
 statsmodels>=0.14
 matplotlib>=3.8
+# Phase 7 - machine learning
+lightgbm>=4.3
+mlflow>=2.14

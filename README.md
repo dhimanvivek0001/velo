@@ -24,6 +24,7 @@ End-to-end data platform on **360 million real NYC ride-hail trips** (Uber & Lyf
 | Scale | 360,465,639 raw trips reconciled exactly at every layer (raw → bronze → silver + quarantine → gold) |
 | Data quality | 30 automated tests per daily run: 0 failures; volume anomalies all explained |
 | Streaming | Chaos test with 1% duplicates + 0.2% malformed events: result identical to the clean run; incident drill with 0 loss |
+| Forecasting | Day-ahead zone-hour demand model (LightGBM, Poisson): 9% less error than a 4-week rule on unseen months (WAPE 12.3% vs 13.6%); holiday error cut by a third |
 | Service | Staten Island riders wait ~30% longer than Manhattan; Newark Airport is a 5× wait outlier |
 
 ## Project status
@@ -36,7 +37,7 @@ End-to-end data platform on **360 million real NYC ride-hail trips** (Uber & Lyf
 - [x] Phase 5 — Data quality & monitoring
 - [x] Phase 10 — Power BI dashboard
 - [x] Phase 8 — Causal analysis: congestion pricing (difference-in-differences)
-- [ ] Phase 7 — Machine learning: demand forecast, wait-time model
+- [x] Phase 7 — Machine learning: day-ahead demand forecast
 - [ ] Phase 6 — Feature store
 - [ ] Phase 9 — MLOps: model registry, API, CI/CD
 - [ ] Phase 11 — GenAI copilot & board memo
@@ -50,6 +51,7 @@ End-to-end data platform on **360 million real NYC ride-hail trips** (Uber & Lyf
 | `databricks/` | PySpark notebooks: bronze, silver, performance, streaming |
 | `dbt/velo/` | dbt project: staging, marts, monitoring and causal models, tests, macros, seeds |
 | `analysis/` | Causal analysis: difference-in-differences, event study, robustness checks |
+| `forecasting/` | Demand forecasting: baselines, LightGBM training (MLflow), evaluation, SHAP |
 | `streaming/` | Kafka stack: producer, sink, contract, surge and lag monitors, Docker services |
 | `bi/` | Power BI project (`.pbip`, version-controlled as text) |
 | `docs/` | Architecture decisions (ADRs), data profile, images |
@@ -171,6 +173,34 @@ TLC parquet -> producer.py -> Kafka topic ride_requests (3 partitions) -> surge_
 - **5.4 Orchestration** (`airflow/dags/dbt_quality.py`): daily `warm_warehouse → dbt_deps → dbt_build → dq_summary`, with dbt in an isolated venv inside a custom Airflow image.
   - **Self-healing:** early runs failed on warehouse cold starts. Added a warm-up task, exponential-backoff retries (2/4/8 min), `max_active_runs=1` and a failure-alert callback. In the next incident the warm-up failed 3 times on capacity and succeeded on try 4 with no manual action.
 - Freshness checks were deliberately omitted: the dataset is historical (ends Jun 2025), so recency tests would always fail.
+
+## Phase 7 — Day-ahead demand forecasting ✅
+
+**Problem:** every evening, forecast trips for **every zone and every hour of tomorrow**, so drivers and incentives can be positioned in advance.
+
+**Features** (`dbt/velo/models/ml/ml_zone_hour_features.sql`, 3.26M rows):
+- A **complete zone × hour grid**: hours with no trips are real rows (`trips = 0`, 4% of the grid), not missing ones.
+- **Leakage-safe:** every demand feature is at least 24 hours old (same hour yesterday / last week / 2 weeks ago, 4-week same-hour average, 7-day level), plus calendar, holiday, policy and weather (actual weather stands in for a weather forecast).
+- **Time-based split:** train Jan 2024 – Feb 2025, validate Mar–Apr 2025, test May–Jun 2025 (touched once, for the chosen model only).
+
+| Model (test: May–Jun 2025) | WAPE | MAE (trips) | Bias |
+|---|---|---|---|
+| Same hour yesterday | 23.9% | 25.5 | +0.2% |
+| Same hour last week | 16.5% | 17.6 | −0.1% |
+| 4-week same-hour average (baseline) | 13.6% | 14.5 | −0.5% |
+| **LightGBM, Poisson loss** | **12.3%** | **13.2** | **−0.5%** |
+
+Experiments tracked in **MLflow** (parameters, metrics, model artifacts, git commit); Poisson loss beat squared error, as expected for count data.
+
+![Forecast vs actual](docs/images/forecast_week.png)
+
+**Error analysis** (`forecasting/evaluate.py`): the model beats the rule in every segment. The biggest gain is on **holidays** (31% → 21% WAPE). Accuracy is best where demand is highest (busy zones: 11.6%) and weakest in quiet zones and at night, which hold little demand. **7 of the 10 biggest zone-day misses are LaGuardia Airport**: airport demand follows flights, not neighbourhood rhythm. The rest are Memorial Day weekend and a Brooklyn Saturday that looks like a local event. These point to the next features: flight volumes, a long-weekend flag and zone-level events.
+
+![What drives the forecast](docs/images/forecast_shap_importance.png)
+
+**Explainability (SHAP, from LightGBM's `pred_contrib`):** the 4-week same-hour average carries ~50% of the signal; recent history (yesterday, 7-day level) lets the model adapt faster than a fixed rule. Weather contributes under 1%: rain moves predicted demand by only +0.4% at the zone-hour level, much weaker than the common intuition.
+
+**Business value (measured):** 8,194 fewer trips mis-forecast per day (−9.0%). *Under an assumption of ~2 trips per driver-hour*, that's ~4,100 driver-hours a day placed better: fewer idle drivers where demand was over-forecast, fewer unserved riders where it was under-forecast.
 
 ## Phase 8 — Causal analysis: congestion pricing ✅
 

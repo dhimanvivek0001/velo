@@ -34,3 +34,6 @@ mlruns/
 
 # Power BI binary (contains imported data)
 *.pbix
+
+# MLflow local tracking
+mlflow.db
