@@ -33,8 +33,10 @@ select
     c.is_holiday,
     c.is_post_cbd_pricing,
     c.is_long_weekend,
-    c.days_to_next_holiday,
-    c.days_since_last_holiday,
+    c.days_to_next_holiday,       -- analysis only (date fingerprint in tree models)
+    c.days_since_last_holiday,    -- analysis only (date fingerprint in tree models)
+    c.days_to_holiday_capped,     -- safe for models: capped at 7 days
+    c.days_since_holiday_capped,  -- safe for models: capped at 7 days
     c.is_day_before_holiday,
     c.is_day_after_holiday,
     -- weather entity

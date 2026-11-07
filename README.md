@@ -25,6 +25,7 @@ End-to-end data platform on **360 million real NYC ride-hail trips** (Uber & Lyf
 | Data quality | 30 automated tests per daily run: 0 failures; volume anomalies all explained |
 | Streaming | Chaos test with 1% duplicates + 0.2% malformed events: result identical to the clean run; incident drill with 0 loss |
 | Forecasting | Day-ahead zone-hour demand model (LightGBM, Poisson): 9% less error than a 4-week rule on unseen months (WAPE 12.3% vs 13.6%); holiday error cut by a third |
+| Feature store | 5 time-stamped feature tables in Unity Catalog; point-in-time training set reproduces the Phase 7 data with 0 differences across 3.26M rows; a hidden date-fingerprint feature caught and fixed |
 | Service | Staten Island riders wait ~30% longer than Manhattan; Newark Airport is a 5× wait outlier |
 
 ## Project status
@@ -38,7 +39,7 @@ End-to-end data platform on **360 million real NYC ride-hail trips** (Uber & Lyf
 - [x] Phase 10 — Power BI dashboard
 - [x] Phase 8 — Causal analysis: congestion pricing (difference-in-differences)
 - [x] Phase 7 — Machine learning: day-ahead demand forecast
-- [ ] Phase 6 — Feature store
+- [x] Phase 6 — Feature store (point-in-time, built on Phase 7's findings)
 - [ ] Phase 9 — MLOps: model registry, API, CI/CD
 - [ ] Phase 11 — GenAI copilot & board memo
 
@@ -49,9 +50,9 @@ End-to-end data platform on **360 million real NYC ride-hail trips** (Uber & Lyf
 | `ingestion/` | Python ingestion: TLC trips, weather API, events API |
 | `airflow/` | Airflow 3 (Docker): ingestion DAG, `dbt_quality` DAG, warehouse warm-up script |
 | `databricks/` | PySpark notebooks: bronze, silver, performance, streaming |
-| `dbt/velo/` | dbt project: staging, marts, monitoring and causal models, tests, macros, seeds |
+| `dbt/velo/` | dbt project: staging, marts, monitoring, causal, ML and feature-store models, tests, macros, seeds |
 | `analysis/` | Causal analysis: difference-in-differences, event study, robustness checks |
-| `forecasting/` | Demand forecasting: baselines, LightGBM training (MLflow), evaluation, SHAP |
+| `forecasting/` | Demand forecasting: baselines, LightGBM training (MLflow), evaluation, SHAP, feature-store ablation (`train_fs.py`) |
 | `streaming/` | Kafka stack: producer, sink, contract, surge and lag monitors, Docker services |
 | `bi/` | Power BI project (`.pbip`, version-controlled as text) |
 | `docs/` | Architecture decisions (ADRs), data profile, images |
@@ -173,6 +174,41 @@ TLC parquet -> producer.py -> Kafka topic ride_requests (3 partitions) -> surge_
 - **5.4 Orchestration** (`airflow/dags/dbt_quality.py`): daily `warm_warehouse → dbt_deps → dbt_build → dq_summary`, with dbt in an isolated venv inside a custom Airflow image.
   - **Self-healing:** early runs failed on warehouse cold starts. Added a warm-up task, exponential-backoff retries (2/4/8 min), `max_active_runs=1` and a failure-alert callback. In the next incident the warm-up failed 3 times on capacity and succeeded on try 4 with no manual action.
 - Freshness checks were deliberately omitted: the dataset is historical (ends Jun 2025), so recency tests would always fail.
+
+## Phase 6 — Feature store ✅
+
+*Built after Phase 7, to fix what its error analysis found.* The forecast's inputs used to live inside one SQL file owned by one model. A feature store turns them into a **shared, tested library of model inputs**, so training and serving (Phase 9) read exactly the same values, and leakage is ruled out by a test rather than by care.
+
+**Design** (`dbt/velo/models/features/`, schema `velo.features`):
+
+| Feature table | Primary key | Contents | When it is known |
+|---|---|---|---|
+| `fs_zone` | `zone_id` | borough, airport / core flags, demand profile (size, night share, sparsity, weekend lift) | Frozen at the training cutoff |
+| `fs_calendar` | `date_day` | holidays, long weekends, holiday proximity (capped), day before / after | In advance |
+| `fs_zone_hour_demand` | `zone_id, hour_ts` | lags, 4-week and 28-day levels, trend, "unusual yesterday" ratio | `available_at` = target hour − 24h |
+| `fs_weather_hour` | `weather_hour` | temperature, precipitation, wet / freezing | `available_at` (actuals as a forecast proxy) |
+
+- **Point-in-time joins:** `ml_training_set` joins each target hour only to feature rows with `available_at <= prediction_ts`.
+- **Primary keys in Unity Catalog** (added by dbt post-hooks), so Databricks recognises the tables as feature tables; owners, entities and timestamp keys are recorded in the dbt registry (`_features.yml`).
+- **Guard tests:** a leakage test (every lag equals the observation at `available_at`, never newer), a grain test, a ground-truth test (known long weekends must be flagged), and a **shadow-migration test**: the new training set reproduces the Phase 7 table with **0 differences across 3,263,472 rows**. Retraining Phase 7's model on it gives the identical result (11.04% validation, 12.34% test).
+
+**Ablation** (Poisson LightGBM; each group added to the Phase 7 features on its own; chosen on validation):
+
+| Feature set | Features | Validation WAPE | Test WAPE* |
+|---|---|---|---|
+| Phase 7 features (champion) | 18 | 11.04% | **12.34%** |
+| + calendar | 23 | 10.89% | 12.50% |
+| + demand trend | 22 | 10.97% | 12.25% |
+| + zone profile | 22 | 10.97% | 12.30% |
+| + all | 31 | **10.87%** | 12.39% |
+
+*Test shown for reporting; it was not used for selection.
+
+**What it showed:**
+- **A hidden date fingerprint.** The first version used raw "days to next / since last holiday". Holidays are irregularly spaced, so that pair almost identifies the date, and the model memorised individual training days: training stopped after 129 trees and validation got *worse*. Capping both at 7 days ("within a week of a holiday") fixed it (1,477 trees, validation better). The fix lives in `fs_calendar`; the raw columns are marked *analysis only* in the registry.
+- **The new features fix what they were built for:** long-weekend error −8% (19.7% → 18.1%) and day-before-holiday error −9% (13.7% → 12.4%). But those days are ~5% of the test period, and the validation gain (−0.17 pts) did not carry over to test (+0.05 pts): within noise.
+- **Decision (champion / challenger):** the Phase 7 model stays the champion. The challenger is not better on the holdout by more than noise, and it needs 31 features instead of 18. Picking `+demand trend` because it scored best on test would turn the test set into a second validation set, so it is not done.
+- **Next:** a holiday-routed model (challenger features on holidays and long weekends only), and the signals the lags cannot carry: flight schedules for airports and zone-level events.
 
 ## Phase 7 — Day-ahead demand forecasting ✅
 

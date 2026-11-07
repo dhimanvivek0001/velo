@@ -6,6 +6,9 @@
 
 -- Feature table: DATE entity (one row per calendar day).
 -- Calendar facts are known in advance, so they are safe to use for a day-ahead forecast.
+-- WARNING: raw holiday distances (days_to_next_holiday, days_since_last_holiday) act as a
+-- DATE FINGERPRINT for tree models (holidays are irregularly spaced). Use the *_capped
+-- versions in models; the raw ones are kept for analysis only.
 
 with d as (
     select
@@ -46,10 +49,12 @@ select
     holiday_name,
     is_post_cbd_pricing,
     is_day_off,
-    (is_day_off and block_len >= 3)                            as is_long_weekend,
-    datediff(next_holiday, date_day)                           as days_to_next_holiday,
-    datediff(date_day, prev_holiday)                           as days_since_last_holiday,
-    coalesce(datediff(next_holiday, date_day) = 1, false)      as is_day_before_holiday,
-    coalesce(datediff(date_day, prev_holiday) = 1, false)      as is_day_after_holiday,
-    current_timestamp()                                        as computed_at
+    (is_day_off and block_len >= 3)                                 as is_long_weekend,
+    datediff(next_holiday, date_day)                                as days_to_next_holiday,
+    datediff(date_day, prev_holiday)                                as days_since_last_holiday,
+    least(coalesce(datediff(next_holiday, date_day), 7), 7)         as days_to_holiday_capped,
+    least(coalesce(datediff(date_day, prev_holiday), 7), 7)         as days_since_holiday_capped,
+    coalesce(datediff(next_holiday, date_day) = 1, false)           as is_day_before_holiday,
+    coalesce(datediff(date_day, prev_holiday) = 1, false)           as is_day_after_holiday,
+    current_timestamp()                                             as computed_at
 from near
