@@ -1,0 +1,60 @@
+# Velo semantic layer: the ONLY data and definitions the copilot is allowed to use.
+# Column lists are read live from velo.information_schema; descriptions and rules are curated here.
+version: 1
+data_range: "NYC TLC high-volume for-hire trips (Uber and Lyft only, no taxis), 2024-01-01 to 2025-06-30"
+
+tables:
+  velo.gold.fct_zone_hour:
+    description: "Main fact table. One row per pickup zone per hour that had at least one trip: trip counts (total, Uber, Lyft, with CBD fee), wait-time metrics, fares and bookings, trip distance, weather."
+    notes:
+      - "Join to velo.gold.dim_zone on zone_id for borough and zone attributes"
+      - "Hours with zero trips have no row"
+      - "Wait-time columns are in minutes"
+  velo.gold.dim_zone:
+    description: "Pickup zones: zone_id, zone name, borough, and flags such as is_manhattan_core and is_airport."
+    notes:
+      - "Boroughs 'EWR', 'N/A' and 'Unknown' are not real NYC pickup zones"
+  velo.gold.dim_date:
+    description: "Calendar 2024-01-01 to 2025-06-30: year, month, day names, weekend flag, federal holidays, is_post_cbd_pricing (date >= 2025-01-05)."
+    notes:
+      - "Join to fact data on date_day = to_date(hour_ts)"
+  velo.gold.daily_area_trips:
+    description: "Daily trips by area: 'CBD' (the 38 congestion-zone pickup zones) vs 'Rest of NYC', with holiday and post-policy flags."
+  velo.gold.cbd_zones:
+    description: "Pickup zones with the share of post-policy trips paying the CBD fee; is_cbd = true for the 38 zones inside the congestion zone."
+
+glossary:
+  CBD: "Manhattan Central Business District congestion-pricing zone (south of 60th Street). Charging started 2025-01-05."
+  wait time: "Minutes from ride request to pickup."
+  trips: "Completed Uber and Lyft trips (high-volume for-hire vehicles). Yellow and green taxis are not included."
+  typical wait: "Trip-weighted average of the per-zone-hour median wait: sum(median_wait * trips) / sum(trips)."
+
+findings:
+  cbd_effect: "Congestion pricing reduced ride-hail pickups inside the CBD by 6.8% (95% CI 4.9% to 8.7%), about 12,300 fewer pickups per day and about 2.1 million fewer trips in the first six months. Method: difference-in-differences with year-over-year controls, placebo and donut checks (Phase 8). A simple before/after comparison is not a causal estimate."
+  forecast_accuracy: "The day-ahead zone-hour demand forecast (LightGBM, Poisson) has a test WAPE of 12.3% vs 13.6% for a 4-week same-hour average baseline (Phase 7); about 8,200 fewer trips mis-forecast per day."
+  data_scale: "360,465,639 raw trips, reconciled exactly through bronze, silver (360,455,986 clean + 9,653 quarantined) and gold."
+  feature_store_ablation: "Adding calendar, trend and zone-profile features cut long-weekend forecast error by 8% but did not improve overall test accuracy, so the simpler model remains the champion (Phase 6)."
+
+rules:
+  - "Write ONE read-only SELECT statement in Databricks SQL. Never modify data."
+  - "Use only the approved tables, always fully qualified as catalog.schema.table."
+  - "Aggregate in SQL and return small summary tables (at most 200 rows)."
+  - "Exclude zones whose borough is 'EWR', 'N/A' or 'Unknown' unless the user asks about them."
+  - "When averaging a per-row median (such as wait time) across rows, weight it by trips."
+  - "For questions about the effect or impact of congestion pricing, use the certified finding cbd_effect; never present a before/after comparison as the effect."
+  - "For forecast accuracy or data volume questions, prefer the matching certified finding."
+  - "If the approved data cannot answer (taxis, individual drivers or riders, dates after 2025-06-30), reply with type refuse."
+  - "For questions asking which item is highest or lowest, return the full ranking ordered by the metric (no LIMIT 1), so the answer can compare."
+  - "velo.gold.fct_zone_hour already has a borough column: do not join dim_zone just for borough. When a query does join tables, prefix EVERY column with its table alias (borough exists in both tables)."
+  - "Share of trips paying the CBD fee for any calendar period: use velo.gold.fct_zone_hour, sum(trips_with_cbd_fee) / sum(trips) filtered on hour_ts. velo.gold.cbd_zones is per-zone over the post-policy period only (from 2025-01-05); use it only to identify which zones are in the CBD."
+
+# Reviewed, correct SQL patterns for the core metrics (deliberately NOT copies of eval questions)
+verified_queries:
+  - question: "What is the typical wait time by hour of day?"
+    sql: "select hour(hour_ts) as hour_of_day, sum(median_wait_min * trips) / sum(trips) as typical_wait_min from velo.gold.fct_zone_hour where borough not in ('EWR', 'N/A', 'Unknown') group by hour(hour_ts) order by hour_of_day"
+  - question: "Which borough had the fewest trips in 2025?"
+    sql: "select borough, sum(trips) as trips from velo.gold.fct_zone_hour where year(hour_ts) = 2025 and borough not in ('EWR', 'N/A', 'Unknown') group by borough order by trips asc"
+  - question: "What share of trips in March 2025 paid the CBD fee?"
+    sql: "select sum(trips_with_cbd_fee) / sum(trips) as cbd_fee_share from velo.gold.fct_zone_hour where hour_ts >= timestamp'2025-03-01' and hour_ts < timestamp'2025-04-01'"
+  - question: "How many trips were there per month in 2024?"
+    sql: "select date_trunc('month', hour_ts) as month, sum(trips) as trips from velo.gold.fct_zone_hour where year(hour_ts) = 2024 group by date_trunc('month', hour_ts) order by month"

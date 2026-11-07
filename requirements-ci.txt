@@ -8,3 +8,4 @@ mlflow>=3.0
 pandas>=2.0
 numpy>=1.26
 pyarrow>=14
+sqlglot>=25

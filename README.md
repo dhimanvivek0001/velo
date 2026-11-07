@@ -2,9 +2,9 @@
 
 [![CI](https://github.com/dhimanvivek0001/velo/actions/workflows/ci.yml/badge.svg)](https://github.com/dhimanvivek0001/velo/actions/workflows/ci.yml)
 
-End-to-end data platform on **360 million real NYC ride-hail trips** (Uber & Lyft, Jan 2024 – Jun 2025): batch and streaming ingestion, a tested lakehouse, data quality monitoring, a business dashboard, a causal policy evaluation, and a day-ahead demand forecast served through a tested API with a feature store, model registry, CI and monitoring. It answers where and when riders wait too long, how demand moves, and what congestion pricing did to Manhattan.
+End-to-end data platform on **360 million real NYC ride-hail trips** (Uber & Lyft, Jan 2024 – Jun 2025): batch and streaming ingestion, a tested lakehouse, data quality monitoring, a business dashboard, a causal policy evaluation, and a day-ahead demand forecast served through a tested API with a feature store, model registry, CI and monitoring, plus a guarded AI copilot that answers business questions from the gold layer. It answers where and when riders wait too long, how demand moves, and what congestion pricing did to Manhattan.
 
-**Stack:** Python · Airflow 3 · Databricks (PySpark, Delta Lake, Unity Catalog, Structured Streaming) · dbt · AWS S3/IAM · Kafka · Docker · Power BI · statsmodels · LightGBM · MLflow · FastAPI · GitHub Actions
+**Stack:** Python · Airflow 3 · Databricks (PySpark, Delta Lake, Unity Catalog, Structured Streaming) · dbt · AWS S3/IAM · Kafka · Docker · Power BI · statsmodels · LightGBM · MLflow · FastAPI · GitHub Actions · Databricks Foundation Model API (Llama 3.3) · sqlglot
 
 ---
 
@@ -27,6 +27,7 @@ End-to-end data platform on **360 million real NYC ride-hail trips** (Uber & Lyf
 | Data quality | 30 automated tests per daily run: 0 failures; volume anomalies all explained |
 | Streaming | Chaos test with 1% duplicates + 0.2% malformed events: result identical to the clean run; incident drill with 0 loss |
 | Forecasting | Day-ahead zone-hour demand model (LightGBM, Poisson): 9% less error than a 4-week rule on unseen months (WAPE 12.3% vs 13.6%); holiday error cut by a third |
+| AI copilot | Text-to-SQL over approved gold tables with code-level guardrails; 42/42 on a 14-question eval set × 3 runs (from 93% at baseline), every query shown and audited |
 | MLOps | Model registry with a written promotion gate (challenger blocked), FastAPI serving from an online feature store, 8 tests incl. a training–serving skew test, CI green on every push, daily accuracy / drift / completeness monitoring |
 | Feature store | 5 time-stamped feature tables in Unity Catalog; point-in-time training set reproduces the Phase 7 data with 0 differences across 3.26M rows; a hidden date-fingerprint feature caught and fixed |
 | Service | Staten Island riders wait ~30% longer than Manhattan; Newark Airport is a 5× wait outlier |
@@ -44,7 +45,7 @@ End-to-end data platform on **360 million real NYC ride-hail trips** (Uber & Lyf
 - [x] Phase 7 — Machine learning: day-ahead demand forecast
 - [x] Phase 6 — Feature store (point-in-time, built on Phase 7's findings)
 - [x] Phase 9 — MLOps: model registry, API, tests, CI/CD, monitoring
-- [ ] Phase 11 — GenAI copilot & board memo
+- [x] Phase 11 — GenAI copilot & board memo
 
 ## Repository structure
 
@@ -56,8 +57,9 @@ End-to-end data platform on **360 million real NYC ride-hail trips** (Uber & Lyf
 | `dbt/velo/` | dbt project: staging, marts, monitoring, causal, ML and feature-store models, tests, macros, seeds |
 | `analysis/` | Causal analysis: difference-in-differences, event study, robustness checks |
 | `forecasting/` | Demand forecasting: baselines, LightGBM training (MLflow), evaluation, SHAP, feature-store ablation (`train_fs.py`) |
+| `copilot/` | AI copilot: semantic layer, SQL guardrails, evaluation set and runner |
 | `serving/` | FastAPI forecast API, online feature store sync, daily model monitoring |
-| `tests/` | pytest: API contract tests (fixture model) and training–serving skew test |
+| `tests/` | pytest: API contract tests (fixture model), copilot SQL guardrail tests, training–serving skew test |
 | `.github/workflows/` | CI: pre-commit hooks, API tests, dbt parse on every push |
 | `streaming/` | Kafka stack: producer, sink, contract, surge and lag monitors, Docker services |
 | `bi/` | Power BI project (`.pbip`, version-controlled as text) |
@@ -301,6 +303,34 @@ CI runs on every push and was green on its first run.
 | Completeness | Alert if > 5% missing while serving | 0% missing while serving |
 
 **What monitoring found:** the first version alerted on temperature (PSI 7.7). Investigation showed this was correct seasonality, since a two-week June window can never match a year-round reference. So the rules were split: PSI alerts for demand features, completeness alerts for external feeds. The same investigation uncovered a real data gap: **weather is missing for Jan–Jun 2024, 38.8% of the training period**. That explains part of temperature's small role in the model. Backfilling that history is the next fix.
+
+## Phase 11 — AI copilot & board memo ✅
+
+**Copilot** (`copilot/`): a manager asks a question in plain English; the copilot writes SQL against the gold layer, runs it safely and answers from the result, showing the query. The model is **Llama 3.3 70B on the Databricks Foundation Model API**.
+
+```
+question → scope guard (code) → LLM + semantic layer → JSON plan → SQL guardrails (code)
+         → SQL warehouse → no-data rule (code) → answer from result rows only → audit log
+```
+
+- **Semantic layer** (`semantic_layer.yml`): approved tables (columns read live from Unity Catalog, never hand-typed), a business glossary, **certified findings** (e.g. the −6.8% policy effect, so the copilot never presents a naive before/after comparison as the effect), rules, and **verified queries** (reviewed SQL patterns for the core metrics).
+- **Guardrails in code** (`guardrails.py`, sqlglot): exactly one statement, `SELECT` only, approved tables only, a `LIMIT` of 200 enforced. Questions about periods outside the data are refused **before** the model runs. Empty results get a fixed answer instead of an AI summary. 12 guardrail tests run in CI.
+- **Self-correction:** a failed query's error is returned to the model for one retry; every attempt is recorded.
+- **Audit log:** every question, SQL, answer and error is appended to a JSONL log.
+
+**Evaluation** (`eval_set.yml`, `evaluate_copilot.py`): 14 questions with known answers (8 SQL, checked against reference queries; 2 certified findings; 4 safety/scope cases, including a prompt injection asking to drop a table).
+
+| Version | Change | Score | First-try success | Lesson |
+|---|---|---|---|---|
+| v0 | Baseline | 93% | 86% | The model wrote SQL for a date outside the data despite a rule against it |
+| v1 | Scope guard in code | 100% | 86% | Anything that *must* happen belongs in code, not in the prompt |
+| v2 | Prompt rule for an ambiguous column | 93% | 93% | Fixing one case broke another: every prompt change needs the full suite |
+| v3 | Metric definition | 93% | 100% | ...and another: adding rules is whack-a-mole |
+| v4 | **Verified queries**, 3 runs per case | **100% (42/42)** | **100%** | Reviewed SQL patterns beat ever more rules; no flaky cases |
+
+**Caveat:** the eval set was also used for tuning, so 100% overstates real-world accuracy. The next step is a **held-out question set** as the gate for wider rollout.
+
+**Board memo** (`docs/board_memo.md`): one page for executives covering the policy effect, service gaps, the forecast pilot and the data/AI capability, with four decisions requested and the limitations stated.
 
 ## Phase 10 — Power BI dashboard ✅
 
