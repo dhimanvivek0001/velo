@@ -1,6 +1,8 @@
 # Velo — Ride-Hailing Marketplace Intelligence Platform
 
-[![CI](https://github.com/dhimanvivek0001/velo/actions/workflows/ci.yml/badge.svg)](https://github.com/dhimanvivek0001/velo/actions/workflows/ci.yml)
+[![CI](https://github.com/dhimanvivek0001/velo/actions/workflows/ci.yml/badge.svg)](https://github.com/dhimanvivek0001/velo/actions/workflows/ci.yml) [![Live demo](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://velo-copilot.streamlit.app/)
+
+**▶ Try the AI copilot: [velo-copilot.streamlit.app](https://velo-copilot.streamlit.app/)** (public demo replaying real recorded answers)
 
 End-to-end data platform on **360 million real NYC ride-hail trips** (Uber & Lyft, Jan 2024 – Jun 2025): batch and streaming ingestion, a tested lakehouse, data quality monitoring, a business dashboard, a causal policy evaluation, and a day-ahead demand forecast served through a tested API with a feature store, model registry, CI and monitoring, plus a guarded AI copilot that answers business questions from the gold layer. It answers where and when riders wait too long, how demand moves, and what congestion pricing did to Manhattan.
 
@@ -318,7 +320,9 @@ question → scope guard (code) → LLM + semantic layer → JSON plan → SQL g
 - **Self-correction:** a failed query's error is returned to the model for one retry; every attempt is recorded.
 - **Audit log:** every question, SQL, answer and error is appended to a JSONL log.
 
-**Web app** (`copilot_app.py`, Streamlit): a chat interface over the same `ask()` function, so the guardrails and audit log are identical to the CLI. Each answer shows a badge (SQL query / certified finding / refused), an automatic chart (rankings as sorted horizontal bars, hours and months in time order), the result table and the SQL that ran. It runs locally (`streamlit run copilot_app.py`) and is deliberately not deployed publicly, because it queries the warehouse with the owner's credentials; a company would host it behind single sign-on.
+**Web app** (`copilot_app.py`, Streamlit): a chat interface over the same `ask()` function, so the guardrails and audit log are identical to the CLI. Each answer shows a badge (SQL query / certified finding / refused), an automatic chart (rankings as sorted horizontal bars, hours and months in time order), the result table and the SQL that ran. The live app runs locally (`streamlit run copilot_app.py`) and is deliberately not deployed publicly, because it queries the warehouse with the owner's credentials; a company would host it behind single sign-on.
+
+**Public demo: [velo-copilot.streamlit.app](https://velo-copilot.streamlit.app/)** (`demo_app/`, Streamlit Community Cloud). It replays 12 real answers recorded from the live copilot (`copilot/record_demo.py` → `copilot/demo_answers.json`), including the refusals, through the same UI code (`copilot/ui.py`). There are no credentials online, answers are instant, and a banner states that the answers are recorded.
 
 ![Velo Copilot web app](docs/images/copilot_app.png)
 
