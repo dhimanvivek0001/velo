@@ -57,7 +57,7 @@ End-to-end data platform on **360 million real NYC ride-hail trips** (Uber & Lyf
 | `dbt/velo/` | dbt project: staging, marts, monitoring, causal, ML and feature-store models, tests, macros, seeds |
 | `analysis/` | Causal analysis: difference-in-differences, event study, robustness checks |
 | `forecasting/` | Demand forecasting: baselines, LightGBM training (MLflow), evaluation, SHAP, feature-store ablation (`train_fs.py`) |
-| `copilot/` | AI copilot: semantic layer, SQL guardrails, evaluation set and runner |
+| `copilot/` | AI copilot: semantic layer, SQL guardrails, evaluation set and runner (web app: `copilot_app.py`) |
 | `serving/` | FastAPI forecast API, online feature store sync, daily model monitoring |
 | `tests/` | pytest: API contract tests (fixture model), copilot SQL guardrail tests, training–serving skew test |
 | `.github/workflows/` | CI: pre-commit hooks, API tests, dbt parse on every push |
@@ -317,6 +317,10 @@ question → scope guard (code) → LLM + semantic layer → JSON plan → SQL g
 - **Guardrails in code** (`guardrails.py`, sqlglot): exactly one statement, `SELECT` only, approved tables only, a `LIMIT` of 200 enforced. Questions about periods outside the data are refused **before** the model runs. Empty results get a fixed answer instead of an AI summary. 12 guardrail tests run in CI.
 - **Self-correction:** a failed query's error is returned to the model for one retry; every attempt is recorded.
 - **Audit log:** every question, SQL, answer and error is appended to a JSONL log.
+
+**Web app** (`copilot_app.py`, Streamlit): a chat interface over the same `ask()` function, so the guardrails and audit log are identical to the CLI. Each answer shows a badge (SQL query / certified finding / refused), an automatic chart (rankings as sorted horizontal bars, hours and months in time order), the result table and the SQL that ran. It runs locally (`streamlit run copilot_app.py`) and is deliberately not deployed publicly, because it queries the warehouse with the owner's credentials; a company would host it behind single sign-on.
+
+![Velo Copilot web app](docs/images/copilot_app.png)
 
 **Evaluation** (`eval_set.yml`, `evaluate_copilot.py`): 14 questions with known answers (8 SQL, checked against reference queries; 2 certified findings; 4 safety/scope cases, including a prompt injection asking to drop a table).
 
